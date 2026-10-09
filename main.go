@@ -11,20 +11,70 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/mhdph/taskmanager/internal/config"
-
-	"github.com/mhdph/taskmanager/internal/hosted"
-
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/config"
+	database "github.com/mhdph/taskmanager/internal/database/generated"
+	"github.com/mhdph/taskmanager/internal/hosted"
+	"github.com/mhdph/taskmanager/internal/project"
 )
 
 func main() {
+	// -------------------------------------------------------------------------
+	// Config
+	// -------------------------------------------------------------------------
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("load config: %v", err)
 	}
+
+	// -------------------------------------------------------------------------
+	// Application context
+	// -------------------------------------------------------------------------
+
+	ctx := context.Background()
+
+	// -------------------------------------------------------------------------
+	// PostgreSQL
+	// -------------------------------------------------------------------------
+
+	poolConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
+	if err != nil {
+		log.Fatalf("parse database config: %v", err)
+	}
+
+	poolConfig.MaxConns = 10
+	poolConfig.MinConns = 2
+	poolConfig.MaxConnLifetime = 30 * time.Minute
+	poolConfig.MaxConnIdleTime = 5 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		log.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	pingCtx, cancelPing := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelPing()
+
+	if err := pool.Ping(pingCtx); err != nil {
+		log.Fatalf("connect database: %v", err)
+	}
+
+	log.Println("database connected")
+
+	// -------------------------------------------------------------------------
+	// SQLC
+	// -------------------------------------------------------------------------
+
+	queries := database.New(pool)
+
+	// -------------------------------------------------------------------------
+	// Hosted
+	// -------------------------------------------------------------------------
 
 	hostedHTTPClient := &http.Client{
 		Timeout: 10 * time.Second,
@@ -34,6 +84,10 @@ func main() {
 		cfg.Hosted.GraphQLEndpoint,
 		hostedHTTPClient,
 	)
+
+	// -------------------------------------------------------------------------
+	// Authentication
+	// -------------------------------------------------------------------------
 
 	identityCache := auth.NewIdentityCache(
 		3 * time.Minute,
@@ -47,52 +101,71 @@ func main() {
 	authMiddleware := auth.NewMiddleware(
 		identityResolver,
 	)
-	ctx := context.Background()
 
-	poolConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// -------------------------------------------------------------------------
+	// Project module
+	// -------------------------------------------------------------------------
 
-	poolConfig.MaxConns = 10
-	poolConfig.MinConns = 2
-	poolConfig.MaxConnLifetime = 30 * time.Minute
-	poolConfig.MaxConnIdleTime = 5 * time.Minute
-
-	db, err := pgxpool.NewWithConfig(ctx, poolConfig)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-
-	pingCtx, cancelPing := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelPing()
-
-	err = db.Ping(pingCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Println("database connected")
-
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/", handleHome)
-	mux.Handle(
-		"/me",
-		authMiddleware.Authenticate(
-			http.HandlerFunc(handleMe),
-		),
+	projectRepository := project.NewRepository(
+		pool,
+		queries,
 	)
+
+	projectService := project.NewService(
+		projectRepository,
+	)
+
+	projectHandler := project.NewHandler(
+		projectService,
+	)
+
+	// -------------------------------------------------------------------------
+	// Router
+	// -------------------------------------------------------------------------
+
+	router := chi.NewRouter()
+
+	// Public routes
+	router.Get("/", handleHome)
+	router.Get("/health", handleHealth)
+
+	// Authenticated user
+	router.With(
+		authMiddleware.Authenticate,
+	).Get(
+		"/me",
+		handleMe,
+	)
+
+	// Projects
+	router.Route("/projects", func(r chi.Router) {
+		r.Use(authMiddleware.Authenticate)
+
+		r.Post("/", projectHandler.Create)
+
+		// Coming next:
+		//
+		// r.Get("/", projectHandler.List)
+		// r.Get("/{projectID}", projectHandler.Get)
+		// r.Patch("/{projectID}", projectHandler.Update)
+		// r.Delete("/{projectID}", projectHandler.Archive)
+	})
+
+	// -------------------------------------------------------------------------
+	// HTTP Server
+	// -------------------------------------------------------------------------
 
 	server := &http.Server{
 		Addr:         cfg.Server.Address(),
-		Handler:      mux,
+		Handler:      router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+
+	// -------------------------------------------------------------------------
+	// Start server
+	// -------------------------------------------------------------------------
 
 	go func() {
 		log.Printf(
@@ -102,10 +175,15 @@ func main() {
 		)
 
 		err := server.ListenAndServe()
+
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
+			log.Fatalf("http server: %v", err)
 		}
 	}()
+
+	// -------------------------------------------------------------------------
+	// Graceful shutdown
+	// -------------------------------------------------------------------------
 
 	shutdown := make(chan os.Signal, 1)
 
@@ -125,33 +203,43 @@ func main() {
 	)
 	defer cancelShutdown()
 
-	err = server.Shutdown(shutdownCtx)
-	if err != nil {
-		log.Fatal(err)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("shutdown server: %v", err)
 	}
 
 	log.Println("server stopped")
 }
 
-func handleHome(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	response := map[string]string{
-		"message": "Task Manager API",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
-		return
-	}
+func handleHome(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	writeJSON(
+		w,
+		http.StatusOK,
+		map[string]string{
+			"message": "Task Manager API",
+		},
+	)
 }
-func handleMe(w http.ResponseWriter, r *http.Request) {
+
+func handleHealth(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	writeJSON(
+		w,
+		http.StatusOK,
+		map[string]string{
+			"status": "ok",
+		},
+	)
+}
+
+func handleMe(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
 	identity, ok := auth.IdentityFromContext(r.Context())
 	if !ok {
 		http.Error(
@@ -162,19 +250,34 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]string{
-		"userId":    identity.UserID,
-		"tenantId":  identity.TenantID,
-		"email":     identity.Email,
-		"firstName": identity.FirstName,
-		"lastName":  identity.LastName,
-		"nupRole":   string(identity.Role),
-	}
+	writeJSON(
+		w,
+		http.StatusOK,
+		map[string]any{
+			"userId":    identity.UserID,
+			"tenantId":  identity.TenantID,
+			"email":     identity.Email,
+			"firstName": identity.FirstName,
+			"lastName":  identity.LastName,
+			"role":      identity.Role,
+			"isSupport": identity.IsSupport,
+		},
+	)
+}
 
-	w.Header().Set("Content-Type", "application/json")
+func writeJSON(
+	w http.ResponseWriter,
+	status int,
+	data any,
+) {
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
 
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
-		log.Printf("encode me response: %v", err)
+	w.WriteHeader(status)
+
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("encode json response: %v", err)
 	}
 }
