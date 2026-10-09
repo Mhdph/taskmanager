@@ -1130,3 +1130,56 @@ func (r *Repository) DeleteStatus(
 
 	return nil
 }
+func (r *Repository) GetStatus(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	statusID string,
+) (ProjectStatus, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	statusUUID, err := uuid.Parse(statusID)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	row, err := r.queries.GetProjectStatus(
+		ctx,
+		db.GetProjectStatusParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			ID: pgtype.UUID{
+				Bytes: statusUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectStatus{}, ErrStatusNotFound
+		}
+
+		return ProjectStatus{}, fmt.Errorf(
+			"get project status: %w",
+			err,
+		)
+	}
+
+	return projectStatusFromDB(row), nil
+}

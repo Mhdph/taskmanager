@@ -78,7 +78,8 @@ func managerHasPermission(
 		PermissionManageMembers,
 		PermissionViewStatuses,
 		PermissionManageStatuses,
-		PermissionArchiveProject:
+		PermissionArchiveProject,
+		PermissionCreateTask:
 		return true
 
 	default:
@@ -91,7 +92,8 @@ func memberHasPermission(
 	switch permission {
 	case PermissionViewProject,
 		PermissionViewMembers,
-		PermissionViewStatuses:
+		PermissionViewStatuses,
+		PermissionCreateTask:
 		return true
 
 	default:

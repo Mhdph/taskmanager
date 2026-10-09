@@ -36,3 +36,29 @@ type ProjectStatus struct {
 	Category  string
 	CreatedAt pgtype.Timestamptz
 }
+
+type Task struct {
+	ID              pgtype.UUID
+	TenantID        string
+	ProjectID       pgtype.UUID
+	StatusID        pgtype.UUID
+	ParentTaskID    pgtype.UUID
+	Title           string
+	Description     pgtype.Text
+	Priority        string
+	AssigneeUserID  pgtype.Text
+	CreatedByUserID string
+	DueAt           pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ArchivedAt      pgtype.Timestamptz
+}
+
+type TaskDependency struct {
+	TenantID        string
+	ProjectID       pgtype.UUID
+	TaskID          pgtype.UUID
+	DependsOnTaskID pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+}

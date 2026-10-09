@@ -19,6 +19,7 @@ import (
 	database "github.com/mhdph/taskmanager/internal/database/generated"
 	"github.com/mhdph/taskmanager/internal/hosted"
 	"github.com/mhdph/taskmanager/internal/project"
+	"github.com/mhdph/taskmanager/internal/task"
 )
 
 func main() {
@@ -123,6 +124,24 @@ func main() {
 	projectHandler := project.NewHandler(
 		projectService,
 	)
+
+	// -------------------------------------------------------------------------
+	// Task module
+	// -------------------------------------------------------------------------
+
+	taskRepository := task.NewRepository(
+		queries,
+	)
+
+	taskService := task.NewService(
+		taskRepository,
+		projectRepository,
+		projectAuthorizer,
+	)
+
+	taskHandler := task.NewHandler(
+		taskService,
+	)
 	// -------------------------------------------------------------------------
 	// Router
 	// -------------------------------------------------------------------------
@@ -154,33 +173,15 @@ func main() {
 			r.Delete("/", projectHandler.Archive)
 
 			r.Route("/members", func(r chi.Router) {
-				r.Get("/", projectHandler.ListMembers)
-				r.Post("/", projectHandler.AddMember)
-
-				r.Patch(
-					"/{userID}",
-					projectHandler.UpdateMemberRole,
-				)
-
-				r.Delete(
-					"/{userID}",
-					projectHandler.RemoveMember,
-				)
+				// ...
 			})
 
 			r.Route("/statuses", func(r chi.Router) {
-				r.Get("/", projectHandler.ListStatuses)
-				r.Post("/", projectHandler.CreateStatus)
+				// ...
+			})
 
-				r.Patch(
-					"/{statusID}",
-					projectHandler.UpdateStatus,
-				)
-
-				r.Delete(
-					"/{statusID}",
-					projectHandler.DeleteStatus,
-				)
+			r.Route("/tasks", func(r chi.Router) {
+				r.Post("/", taskHandler.Create)
 			})
 		})
 	})
