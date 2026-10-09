@@ -34,7 +34,7 @@ WHERE
 ORDER BY created_at DESC;
 
 
--- name: ArchiveProject :exec
+-- name: ArchiveProject :execrows
 UPDATE projects
 SET
     archived_at = NOW(),

@@ -111,14 +111,18 @@ func main() {
 		queries,
 	)
 
+	projectAuthorizer := project.NewAuthorizer(
+		projectRepository,
+	)
+
 	projectService := project.NewService(
 		projectRepository,
+		projectAuthorizer,
 	)
 
 	projectHandler := project.NewHandler(
 		projectService,
 	)
-
 	// -------------------------------------------------------------------------
 	// Router
 	// -------------------------------------------------------------------------
@@ -147,6 +151,7 @@ func main() {
 		r.Route("/{projectID}", func(r chi.Router) {
 			r.Get("/", projectHandler.Get)
 			r.Patch("/", projectHandler.Update)
+			r.Delete("/", projectHandler.Archive)
 		})
 	})
 

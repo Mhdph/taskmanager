@@ -453,3 +453,69 @@ func (h *Handler) Update(
 		)
 	}
 }
+
+func (h *Handler) Archive(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	err := h.service.Archive(
+		r.Context(),
+		identity,
+		projectID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidID):
+			http.Error(
+				w,
+				"invalid project id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrNotFound):
+			http.Error(
+				w,
+				"project not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(err, ErrForbidden):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"archive project: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to archive project",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

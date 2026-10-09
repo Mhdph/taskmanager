@@ -560,3 +560,41 @@ func (r *Repository) Update(
 
 	return projectFromDB(row), nil
 }
+
+func (r *Repository) Archive(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+) error {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	affected, err := r.queries.ArchiveProject(
+		ctx,
+		db.ArchiveProjectParams{
+			TenantID: tenantID,
+			ID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"archive project: %w",
+			err,
+		)
+	}
+
+	if affected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}

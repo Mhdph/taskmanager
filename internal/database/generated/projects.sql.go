@@ -43,7 +43,7 @@ func (q *Queries) AddProjectMember(ctx context.Context, arg AddProjectMemberPara
 	return err
 }
 
-const archiveProject = `-- name: ArchiveProject :exec
+const archiveProject = `-- name: ArchiveProject :execrows
 UPDATE projects
 SET
     archived_at = NOW(),
@@ -58,9 +58,12 @@ type ArchiveProjectParams struct {
 	ID       pgtype.UUID
 }
 
-func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) error {
-	_, err := q.db.Exec(ctx, archiveProject, arg.TenantID, arg.ID)
-	return err
+func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) (int64, error) {
+	result, err := q.db.Exec(ctx, archiveProject, arg.TenantID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createProject = `-- name: CreateProject :one

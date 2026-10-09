@@ -11,11 +11,16 @@ import (
 
 type Service struct {
 	repository *Repository
+	authorizer *Authorizer
 }
 
-func NewService(repository *Repository) *Service {
+func NewService(
+	repository *Repository,
+	authorizer *Authorizer,
+) *Service {
 	return &Service{
 		repository: repository,
+		authorizer: authorizer,
 	}
 }
 
@@ -204,23 +209,17 @@ func (s *Service) Update(
 	ctx context.Context,
 	input UpdateInput,
 ) (Project, error) {
-	if !input.Identity.IsAdmin() {
-		role, err := s.repository.GetMemberRole(
-			ctx,
-			input.Identity.TenantID,
-			input.ProjectID,
-			input.Identity.UserID,
+	err := s.authorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		PermissionEditProject,
+	)
+	if err != nil {
+		return Project{}, fmt.Errorf(
+			"authorize project update: %w",
+			err,
 		)
-		if err != nil {
-			return Project{}, fmt.Errorf(
-				"get project membership: %w",
-				err,
-			)
-		}
-
-		if role != MemberRoleManager {
-			return Project{}, ErrForbidden
-		}
 	}
 
 	var name *string
@@ -264,4 +263,36 @@ func (s *Service) Update(
 	}
 
 	return project, nil
+}
+
+func (s *Service) Archive(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+) error {
+	err := s.authorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		PermissionArchiveProject,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"authorize project archive: %w",
+			err,
+		)
+	}
+
+	if err := s.repository.Archive(
+		ctx,
+		identity.TenantID,
+		projectID,
+	); err != nil {
+		return fmt.Errorf(
+			"archive project: %w",
+			err,
+		)
+	}
+
+	return nil
 }
