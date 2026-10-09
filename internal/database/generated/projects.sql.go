@@ -311,3 +311,129 @@ func (q *Queries) ListProjects(ctx context.Context, tenantID string) ([]Project,
 	}
 	return items, nil
 }
+
+const listProjectsForTenant = `-- name: ListProjectsForTenant :many
+SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+FROM projects
+WHERE
+    tenant_id = $1
+    AND archived_at IS NULL
+    AND (
+        $2::timestamptz IS NULL
+        OR
+        (created_at, id) <
+        (
+            $2::timestamptz,
+            $3::uuid
+        )
+    )
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+`
+
+type ListProjectsForTenantParams struct {
+	TenantID        string
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListProjectsForTenant(ctx context.Context, arg ListProjectsForTenantParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsForTenant,
+		arg.TenantID,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedByUserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectsForUser = `-- name: ListProjectsForUser :many
+SELECT p.id, p.tenant_id, p.name, p.description, p.created_by_user_id, p.created_at, p.updated_at, p.archived_at
+FROM projects p
+JOIN project_members pm
+    ON pm.project_id = p.id
+WHERE
+    p.tenant_id = $1
+    AND pm.tenant_id = $1
+    AND pm.user_id = $2
+    AND p.archived_at IS NULL
+    AND (
+        $3::timestamptz IS NULL
+        OR
+        (p.created_at, p.id) <
+        (
+            $3::timestamptz,
+            $4::uuid
+        )
+    )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT $5
+`
+
+type ListProjectsForUserParams struct {
+	TenantID        string
+	UserID          string
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUserParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsForUser,
+		arg.TenantID,
+		arg.UserID,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedByUserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

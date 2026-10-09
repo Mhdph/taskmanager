@@ -239,3 +239,125 @@ func (r *Repository) CreateWithDefaultStatuses(
 
 	return projectFromDB(row), nil
 }
+
+func (r *Repository) ListForTenant(
+	ctx context.Context,
+	tenantID string,
+	options ListOptions,
+) ([]Project, error) {
+	var cursorCreatedAt pgtype.Timestamptz
+	var cursorID pgtype.UUID
+
+	if options.Cursor != nil {
+		cursorCreatedAt = pgtype.Timestamptz{
+			Time:  options.Cursor.CreatedAt,
+			Valid: true,
+		}
+
+		id, err := uuid.Parse(options.Cursor.ID)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"parse cursor project id: %w",
+				err,
+			)
+		}
+
+		cursorID = pgtype.UUID{
+			Bytes: id,
+			Valid: true,
+		}
+	}
+
+	rows, err := r.queries.ListProjectsForTenant(
+		ctx,
+		db.ListProjectsForTenantParams{
+			TenantID:        tenantID,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			PageLimit:       options.Limit,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list projects for tenant: %w",
+			err,
+		)
+	}
+
+	projects := make(
+		[]Project,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		projects = append(
+			projects,
+			projectFromDB(row),
+		)
+	}
+
+	return projects, nil
+}
+
+func (r *Repository) ListForUser(
+	ctx context.Context,
+	tenantID string,
+	userID string,
+	options ListOptions,
+) ([]Project, error) {
+	var cursorCreatedAt pgtype.Timestamptz
+	var cursorID pgtype.UUID
+
+	if options.Cursor != nil {
+		cursorCreatedAt = pgtype.Timestamptz{
+			Time:  options.Cursor.CreatedAt,
+			Valid: true,
+		}
+
+		id, err := uuid.Parse(options.Cursor.ID)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"parse cursor project id: %w",
+				err,
+			)
+		}
+
+		cursorID = pgtype.UUID{
+			Bytes: id,
+			Valid: true,
+		}
+	}
+
+	rows, err := r.queries.ListProjectsForUser(
+		ctx,
+		db.ListProjectsForUserParams{
+			TenantID:        tenantID,
+			UserID:          userID,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			PageLimit:       options.Limit,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list projects for user: %w",
+			err,
+		)
+	}
+
+	projects := make(
+		[]Project,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		projects = append(
+			projects,
+			projectFromDB(row),
+		)
+	}
+
+	return projects, nil
+}

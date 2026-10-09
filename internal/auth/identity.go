@@ -4,11 +4,6 @@ import "context"
 
 type Role string
 
-const (
-	RoleAdmin  Role = "Admin"
-	RoleMember Role = "Member"
-)
-
 type Identity struct {
 	UserID   string
 	TenantID string

@@ -95,3 +95,44 @@ WHERE
     tenant_id = $1
     AND project_id = $2
 ORDER BY position ASC;
+
+
+-- name: ListProjectsForTenant :many
+SELECT *
+FROM projects
+WHERE
+    tenant_id = sqlc.arg(tenant_id)
+    AND archived_at IS NULL
+    AND (
+        sqlc.narg(cursor_created_at)::timestamptz IS NULL
+        OR
+        (created_at, id) <
+        (
+            sqlc.narg(cursor_created_at)::timestamptz,
+            sqlc.narg(cursor_id)::uuid
+        )
+    )
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListProjectsForUser :many
+SELECT p.*
+FROM projects p
+JOIN project_members pm
+    ON pm.project_id = p.id
+WHERE
+    p.tenant_id = sqlc.arg(tenant_id)
+    AND pm.tenant_id = sqlc.arg(tenant_id)
+    AND pm.user_id = sqlc.arg(user_id)
+    AND p.archived_at IS NULL
+    AND (
+        sqlc.narg(cursor_created_at)::timestamptz IS NULL
+        OR
+        (p.created_at, p.id) <
+        (
+            sqlc.narg(cursor_created_at)::timestamptz,
+            sqlc.narg(cursor_id)::uuid
+        )
+    )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT sqlc.arg(page_limit);

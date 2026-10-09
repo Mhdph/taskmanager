@@ -142,13 +142,7 @@ func main() {
 		r.Use(authMiddleware.Authenticate)
 
 		r.Post("/", projectHandler.Create)
-
-		// Coming next:
-		//
-		// r.Get("/", projectHandler.List)
-		// r.Get("/{projectID}", projectHandler.Get)
-		// r.Patch("/{projectID}", projectHandler.Update)
-		// r.Delete("/{projectID}", projectHandler.Archive)
+		r.Get("/", projectHandler.List)
 	})
 
 	// -------------------------------------------------------------------------

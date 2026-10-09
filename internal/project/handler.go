@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/mhdph/taskmanager/internal/auth"
 )
@@ -21,6 +23,11 @@ func NewHandler(service *Service) *Handler {
 type createProjectRequest struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
+}
+
+type listProjectsResponse struct {
+	Items      []projectResponse `json:"items"`
+	NextCursor *string           `json:"nextCursor"`
 }
 
 type projectResponse struct {
@@ -104,5 +111,104 @@ func (h *Handler) Create(
 			"encode project response: %v",
 			err,
 		)
+	}
+}
+
+func (h *Handler) List(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	limit := 20
+
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			http.Error(
+				w,
+				"invalid limit",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		limit = parsed
+	}
+
+	cursor := r.URL.Query().Get("cursor")
+
+	page, err := h.service.List(
+		r.Context(),
+		ListInput{
+			Identity: identity,
+			Limit:    limit,
+			Cursor:   cursor,
+		},
+	)
+	if err != nil {
+		log.Printf(
+			"list projects: %v",
+			err,
+		)
+
+		http.Error(
+			w,
+			"failed to list projects",
+			http.StatusInternalServerError,
+		)
+		return
+	}
+
+	items := make(
+		[]projectResponse,
+		0,
+		len(page.Items),
+	)
+
+	for _, item := range page.Items {
+		items = append(
+			items,
+			toProjectResponse(item),
+		)
+	}
+
+	response := listProjectsResponse{
+		Items:      items,
+		NextCursor: page.NextCursor,
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf(
+			"encode projects response: %v",
+			err,
+		)
+	}
+}
+
+func toProjectResponse(project Project) projectResponse {
+	return projectResponse{
+		ID:          project.ID,
+		Name:        project.Name,
+		Description: project.Description,
+		CreatedAt: project.CreatedAt.
+			UTC().
+			Format(time.RFC3339),
+		UpdatedAt: project.UpdatedAt.
+			UTC().
+			Format(time.RFC3339),
 	}
 }
