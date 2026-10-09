@@ -11,19 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addProjectMember = `-- name: AddProjectMember :exec
+const addProjectMember = `-- name: AddProjectMember :one
 INSERT INTO project_members (
     project_id,
     tenant_id,
     user_id,
     role
-)
-VALUES (
+    )
+    VALUES (
     $1,
     $2,
     $3,
     $4
-)
+    )
+RETURNING project_id, tenant_id, user_id, role, created_at
 `
 
 type AddProjectMemberParams struct {
@@ -33,14 +34,22 @@ type AddProjectMemberParams struct {
 	Role      string
 }
 
-func (q *Queries) AddProjectMember(ctx context.Context, arg AddProjectMemberParams) error {
-	_, err := q.db.Exec(ctx, addProjectMember,
+func (q *Queries) AddProjectMember(ctx context.Context, arg AddProjectMemberParams) (ProjectMember, error) {
+	row := q.db.QueryRow(ctx, addProjectMember,
 		arg.ProjectID,
 		arg.TenantID,
 		arg.UserID,
 		arg.Role,
 	)
-	return err
+	var i ProjectMember
+	err := row.Scan(
+		&i.ProjectID,
+		&i.TenantID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const archiveProject = `-- name: ArchiveProject :execrows
@@ -64,6 +73,27 @@ func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const countProjectManagers = `-- name: CountProjectManagers :one
+SELECT COUNT(*)
+FROM project_members
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND role = 'manager'
+`
+
+type CountProjectManagersParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+}
+
+func (q *Queries) CountProjectManagers(ctx context.Context, arg CountProjectManagersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjectManagers, arg.TenantID, arg.ProjectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createProject = `-- name: CreateProject :one
@@ -163,6 +193,28 @@ func (q *Queries) CreateProjectStatus(ctx context.Context, arg CreateProjectStat
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const deleteProjectMember = `-- name: DeleteProjectMember :execrows
+DELETE FROM project_members
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND user_id = $3
+`
+
+type DeleteProjectMemberParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	UserID    string
+}
+
+func (q *Queries) DeleteProjectMember(ctx context.Context, arg DeleteProjectMemberParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectMember, arg.TenantID, arg.ProjectID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getProject = `-- name: GetProject :one
@@ -580,6 +632,42 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const updateProjectMemberRole = `-- name: UpdateProjectMemberRole :one
+UPDATE project_members
+SET
+    role = $4
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND user_id = $3
+RETURNING project_id, tenant_id, user_id, role, created_at
+`
+
+type UpdateProjectMemberRoleParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	UserID    string
+	Role      string
+}
+
+func (q *Queries) UpdateProjectMemberRole(ctx context.Context, arg UpdateProjectMemberRoleParams) (ProjectMember, error) {
+	row := q.db.QueryRow(ctx, updateProjectMemberRole,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.UserID,
+		arg.Role,
+	)
+	var i ProjectMember
+	err := row.Scan(
+		&i.ProjectID,
+		&i.TenantID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
 	)
 	return i, err
 }

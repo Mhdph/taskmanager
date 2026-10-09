@@ -152,9 +152,23 @@ func main() {
 			r.Get("/", projectHandler.Get)
 			r.Patch("/", projectHandler.Update)
 			r.Delete("/", projectHandler.Archive)
+
+			r.Route("/members", func(r chi.Router) {
+				r.Get("/", projectHandler.ListMembers)
+				r.Post("/", projectHandler.AddMember)
+
+				r.Patch(
+					"/{userID}",
+					projectHandler.UpdateMemberRole,
+				)
+
+				r.Delete(
+					"/{userID}",
+					projectHandler.RemoveMember,
+				)
+			})
 		})
 	})
-
 	// -------------------------------------------------------------------------
 	// HTTP Server
 	// -------------------------------------------------------------------------

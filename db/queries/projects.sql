@@ -43,21 +43,20 @@ WHERE
     tenant_id = $1
     AND id = $2;
 
-
--- name: AddProjectMember :exec
+-- name: AddProjectMember :one
 INSERT INTO project_members (
     project_id,
     tenant_id,
     user_id,
     role
-)
-VALUES (
+    )
+    VALUES (
     $1,
     $2,
     $3,
     $4
-);
-
+    )
+RETURNING *;
 
 -- name: ListProjectMembers :many
 SELECT *
@@ -202,3 +201,30 @@ UPDATE projects
         AND id = sqlc.arg(id)
         AND archived_at IS NULL
     RETURNING *;
+
+
+-- name: UpdateProjectMemberRole :one
+UPDATE project_members
+SET
+    role = $4
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND user_id = $3
+RETURNING *;
+
+
+-- name: DeleteProjectMember :execrows
+DELETE FROM project_members
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND user_id = $3;
+
+-- name: CountProjectManagers :one
+SELECT COUNT(*)
+FROM project_members
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND role = 'manager';

@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	db "github.com/mhdph/taskmanager/internal/database/generated"
 )
 
@@ -44,6 +44,13 @@ type UpdateParams struct {
 
 	UpdateDescription bool
 	Description       *string
+}
+
+type AddMemberParams struct {
+	TenantID  string
+	ProjectID string
+	UserID    string
+	Role      MemberRole
 }
 
 func (r *Repository) Create(
@@ -171,7 +178,7 @@ func (r *Repository) CreateWithDefaultStatuses(
 		)
 	}
 
-	err = qtx.AddProjectMember(
+	_, err = qtx.AddProjectMember(
 		ctx,
 		db.AddProjectMemberParams{
 			ProjectID: pgtype.UUID{
@@ -597,4 +604,226 @@ func (r *Repository) Archive(
 	}
 
 	return nil
+}
+
+func (r *Repository) AddMember(
+	ctx context.Context,
+	params AddMemberParams,
+) (ProjectMember, error) {
+	projectID, err := uuid.Parse(
+		params.ProjectID,
+	)
+	if err != nil {
+		return ProjectMember{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	row, err := r.queries.AddProjectMember(
+		ctx,
+		db.AddProjectMemberParams{
+			ProjectID: pgtype.UUID{
+				Bytes: projectID,
+				Valid: true,
+			},
+			TenantID: params.TenantID,
+			UserID:   params.UserID,
+			Role:     string(params.Role),
+		},
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" {
+			return ProjectMember{}, ErrMemberExists
+		}
+
+		return ProjectMember{}, fmt.Errorf(
+			"add project member: %w",
+			err,
+		)
+	}
+
+	return projectMemberFromDB(row), nil
+}
+
+func projectMemberFromDB(
+	row db.ProjectMember,
+) ProjectMember {
+	member := ProjectMember{
+		TenantID:  row.TenantID,
+		UserID:    row.UserID,
+		Role:      MemberRole(row.Role),
+		CreatedAt: row.CreatedAt.Time,
+	}
+
+	if row.ProjectID.Valid {
+		member.ProjectID = uuid.UUID(
+			row.ProjectID.Bytes,
+		).String()
+	}
+
+	return member
+}
+func (r *Repository) ListMembers(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+) ([]ProjectMember, error) {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	rows, err := r.queries.ListProjectMembers(
+		ctx,
+		db.ListProjectMembersParams{
+			TenantID: tenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list project members: %w",
+			err,
+		)
+	}
+
+	members := make(
+		[]ProjectMember,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		members = append(
+			members,
+			projectMemberFromDB(row),
+		)
+	}
+
+	return members, nil
+}
+func (r *Repository) UpdateMemberRole(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	userID string,
+	role MemberRole,
+) (ProjectMember, error) {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return ProjectMember{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	row, err := r.queries.UpdateProjectMemberRole(
+		ctx,
+		db.UpdateProjectMemberRoleParams{
+			TenantID: tenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+			UserID: userID,
+			Role:   string(role),
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectMember{}, ErrMemberNotFound
+		}
+
+		return ProjectMember{}, fmt.Errorf(
+			"update project member role: %w",
+			err,
+		)
+	}
+
+	return projectMemberFromDB(row), nil
+}
+func (r *Repository) DeleteMember(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	userID string,
+) error {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	affected, err := r.queries.DeleteProjectMember(
+		ctx,
+		db.DeleteProjectMemberParams{
+			TenantID: tenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"delete project member: %w",
+			err,
+		)
+	}
+
+	if affected == 0 {
+		return ErrMemberNotFound
+	}
+
+	return nil
+}
+func (r *Repository) CountManagers(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+) (int64, error) {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	count, err := r.queries.CountProjectManagers(
+		ctx,
+		db.CountProjectManagersParams{
+			TenantID: tenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"count project managers: %w",
+			err,
+		)
+	}
+
+	return count, nil
 }

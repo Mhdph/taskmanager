@@ -22,3 +22,12 @@ type ProjectPage struct {
 	Items      []Project
 	NextCursor *string
 }
+
+type ProjectMember struct {
+	ProjectID string
+	TenantID  string
+	UserID    string
+	Role      MemberRole
+
+	CreatedAt time.Time
+}

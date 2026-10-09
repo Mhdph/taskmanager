@@ -7,6 +7,8 @@ const (
 
 	PermissionEditProject Permission = "edit_project"
 
+	PermissionViewMembers Permission = "view_members"
+
 	PermissionManageMembers Permission = "manage_members"
 
 	PermissionManageStatuses Permission = "manage_statuses"
