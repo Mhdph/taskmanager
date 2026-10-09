@@ -285,3 +285,159 @@ func (r *Repository) GetForProject(
 
 	return taskFromDB(row), nil
 }
+func (r *Repository) ListForProject(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	options ListOptions,
+) ([]Task, error) {
+	projectUUID, err := uuid.Parse(
+		projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	var statusID pgtype.UUID
+
+	if options.StatusID != nil {
+		value, err := uuid.Parse(
+			*options.StatusID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"%w: %v",
+				ErrInvalidID,
+				err,
+			)
+		}
+
+		statusID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	var assigneeUserID pgtype.Text
+
+	if options.AssigneeUserID != nil {
+		assigneeUserID = pgtype.Text{
+			String: *options.AssigneeUserID,
+			Valid:  true,
+		}
+	}
+
+	var priority pgtype.Text
+
+	if options.Priority != nil {
+		priority = pgtype.Text{
+			String: string(
+				*options.Priority,
+			),
+			Valid: true,
+		}
+	}
+
+	var parentTaskID pgtype.UUID
+
+	if options.ParentTaskID != nil {
+		value, err := uuid.Parse(
+			*options.ParentTaskID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"%w: %v",
+				ErrInvalidID,
+				err,
+			)
+		}
+
+		parentTaskID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	var search pgtype.Text
+
+	if options.Search != nil {
+		search = pgtype.Text{
+			String: *options.Search,
+			Valid:  true,
+		}
+	}
+
+	var cursorCreatedAt pgtype.Timestamptz
+	var cursorID pgtype.UUID
+
+	if options.Cursor != nil {
+		cursorCreatedAt = pgtype.Timestamptz{
+			Time:  options.Cursor.CreatedAt,
+			Valid: true,
+		}
+
+		value, err := uuid.Parse(
+			options.Cursor.ID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"%w: invalid cursor id: %v",
+				ErrInvalidID,
+				err,
+			)
+		}
+
+		cursorID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	rows, err := r.queries.ListTasksForProject(
+		ctx,
+		db.ListTasksForProjectParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			StatusID:       statusID,
+			AssigneeUserID: assigneeUserID,
+			Priority:       priority,
+			ParentTaskID:   parentTaskID,
+			Search:         search,
+
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+
+			PageLimit: options.Limit,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list tasks for project: %w",
+			err,
+		)
+	}
+
+	tasks := make(
+		[]Task,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		tasks = append(
+			tasks,
+			taskFromDB(row),
+		)
+	}
+
+	return tasks, nil
+}

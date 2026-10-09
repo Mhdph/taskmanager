@@ -36,3 +36,24 @@ type Task struct {
 
 	ArchivedAt *time.Time
 }
+
+type Cursor struct {
+	CreatedAt time.Time
+	ID        string
+}
+
+type ListOptions struct {
+	Limit  int32
+	Cursor *Cursor
+
+	StatusID       *string
+	AssigneeUserID *string
+	Priority       *Priority
+	ParentTaskID   *string
+	Search         *string
+}
+
+type TaskPage struct {
+	Items      []Task
+	NextCursor *string
+}

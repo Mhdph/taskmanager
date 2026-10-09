@@ -196,3 +196,165 @@ func (s *Service) Create(
 
 	return task, nil
 }
+
+type ListInput struct {
+	Identity  auth.Identity
+	ProjectID string
+
+	Limit  int
+	Cursor string
+
+	StatusID       string
+	AssigneeUserID string
+	Priority       string
+	ParentTaskID   string
+	Search         string
+}
+
+func (s *Service) List(
+	ctx context.Context,
+	input ListInput,
+) (TaskPage, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		project.PermissionViewTasks,
+	)
+	if err != nil {
+		return TaskPage{}, fmt.Errorf(
+			"authorize task list: %w",
+			err,
+		)
+	}
+
+	limit := input.Limit
+
+	if limit <= 0 {
+		limit = 20
+	}
+
+	if limit > 100 {
+		limit = 100
+	}
+
+	var cursor *Cursor
+
+	if input.Cursor != "" {
+		decoded, err := DecodeCursor(
+			input.Cursor,
+		)
+		if err != nil {
+			return TaskPage{}, fmt.Errorf(
+				"invalid cursor: %w",
+				err,
+			)
+		}
+
+		cursor = &decoded
+	}
+
+	var statusID *string
+
+	if input.StatusID != "" {
+		statusID = &input.StatusID
+	}
+
+	var assigneeUserID *string
+
+	if input.AssigneeUserID != "" {
+		assigneeUserID =
+			&input.AssigneeUserID
+	}
+
+	var priority *Priority
+
+	if input.Priority != "" {
+		value := Priority(
+			input.Priority,
+		)
+
+		switch value {
+		case PriorityLow,
+			PriorityMedium,
+			PriorityHigh,
+			PriorityUrgent:
+
+		default:
+			return TaskPage{},
+				ErrInvalidPriority
+		}
+
+		priority = &value
+	}
+
+	var parentTaskID *string
+
+	if input.ParentTaskID != "" {
+		parentTaskID =
+			&input.ParentTaskID
+	}
+
+	var search *string
+
+	if value := strings.TrimSpace(
+		input.Search,
+	); value != "" {
+		search = &value
+	}
+
+	options := ListOptions{
+		Limit: int32(
+			limit + 1,
+		),
+
+		Cursor: cursor,
+
+		StatusID:       statusID,
+		AssigneeUserID: assigneeUserID,
+		Priority:       priority,
+		ParentTaskID:   parentTaskID,
+		Search:         search,
+	}
+
+	tasks, err := s.repository.ListForProject(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		options,
+	)
+	if err != nil {
+		return TaskPage{}, fmt.Errorf(
+			"list tasks: %w",
+			err,
+		)
+	}
+
+	hasNext := len(tasks) > limit
+
+	if hasNext {
+		tasks = tasks[:limit]
+	}
+
+	var nextCursor *string
+
+	if hasNext &&
+		len(tasks) > 0 {
+
+		last := tasks[len(tasks)-1]
+
+		value := EncodeCursor(
+			Cursor{
+				CreatedAt: last.CreatedAt,
+				ID:        last.ID,
+			},
+		)
+
+		nextCursor = &value
+	}
+
+	return TaskPage{
+		Items:      tasks,
+		NextCursor: nextCursor,
+	}, nil
+}

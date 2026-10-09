@@ -128,3 +128,114 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 	)
 	return i, err
 }
+
+const listTasksForProject = `-- name: ListTasksForProject :many
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
+FROM tasks
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND archived_at IS NULL
+
+    AND (
+            $3::uuid IS NULL
+            OR status_id = $3::uuid
+        )
+
+    AND (
+            $4::text IS NULL
+            OR assignee_user_id = $4::text
+        )
+
+    AND (
+            $5::varchar IS NULL
+            OR priority = $5::varchar
+        )
+
+    AND (
+            $6::uuid IS NULL
+            OR parent_task_id = $6::uuid
+        )
+
+    AND (
+            $7::text IS NULL
+            OR title ILIKE '%' || $7::text || '%'
+        )
+
+    AND (
+            $8::timestamptz IS NULL
+            OR (
+                created_at,
+                id
+            ) < (
+                $8::timestamptz,
+                $9::uuid
+            )
+        )
+
+    ORDER BY
+        created_at DESC,
+        id DESC
+
+    LIMIT $10
+`
+
+type ListTasksForProjectParams struct {
+	TenantID        string
+	ProjectID       pgtype.UUID
+	StatusID        pgtype.UUID
+	AssigneeUserID  pgtype.Text
+	Priority        pgtype.Text
+	ParentTaskID    pgtype.UUID
+	Search          pgtype.Text
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListTasksForProject(ctx context.Context, arg ListTasksForProjectParams) ([]Task, error) {
+	rows, err := q.db.Query(ctx, listTasksForProject,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.StatusID,
+		arg.AssigneeUserID,
+		arg.Priority,
+		arg.ParentTaskID,
+		arg.Search,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ProjectID,
+			&i.StatusID,
+			&i.ParentTaskID,
+			&i.Title,
+			&i.Description,
+			&i.Priority,
+			&i.AssigneeUserID,
+			&i.CreatedByUserID,
+			&i.DueAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
