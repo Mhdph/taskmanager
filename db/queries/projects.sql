@@ -136,3 +136,24 @@ WHERE
     )
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT sqlc.arg(page_limit);
+
+-- name: GetProjectForTenant :one
+SELECT *
+FROM projects
+WHERE
+    tenant_id = $1
+    AND id = $2
+    AND archived_at IS NULL;
+
+
+-- name: GetProjectForUser :one
+SELECT p.*
+FROM projects p
+JOIN project_members pm
+    ON pm.project_id = p.id
+WHERE
+    p.tenant_id = $1
+    AND pm.tenant_id = $1
+    AND p.id = $2
+    AND pm.user_id = $3
+    AND p.archived_at IS NULL;

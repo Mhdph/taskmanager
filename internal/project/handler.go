@@ -2,11 +2,13 @@ package project
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/mhdph/taskmanager/internal/auth"
 )
 
@@ -75,13 +77,16 @@ func (h *Handler) Create(
 		},
 	)
 	if err != nil {
-		http.Error(
-			w,
-			"failed to create project",
-			http.StatusInternalServerError,
+		log.Printf(
+			"create project: %v",
+			err,
 		)
 
-		log.Printf("create project: %v", err)
+		handleProjectError(
+			w,
+			"failed to create project",
+			err,
+		)
 
 		return
 	}
@@ -160,11 +165,12 @@ func (h *Handler) List(
 			err,
 		)
 
-		http.Error(
+		handleProjectError(
 			w,
 			"failed to list projects",
-			http.StatusInternalServerError,
+			err,
 		)
+
 		return
 	}
 
@@ -195,6 +201,101 @@ func (h *Handler) List(
 		log.Printf(
 			"encode projects response: %v",
 			err,
+		)
+	}
+}
+
+func (h *Handler) Get(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	if projectID == "" {
+		http.Error(
+			w,
+			"project id is required",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	project, err := h.service.Get(
+		r.Context(),
+		identity,
+		projectID,
+	)
+	if err != nil {
+		log.Printf(
+			"get project: %v",
+			err,
+		)
+
+		handleProjectError(
+			w,
+			"failed to get project",
+			err,
+		)
+
+		return
+	}
+
+	response := toProjectResponse(project)
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf(
+			"encode project response: %v",
+			err,
+		)
+	}
+}
+
+func handleProjectError(
+	w http.ResponseWriter,
+	message string,
+	err error,
+) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		http.Error(
+			w,
+			ErrNotFound.Error(),
+			http.StatusNotFound,
+		)
+
+	case errors.Is(err, ErrInvalidID),
+		errors.Is(err, ErrNameRequired),
+		errors.Is(err, ErrNameTooLong),
+		errors.Is(err, ErrInvalidCursor):
+		http.Error(
+			w,
+			err.Error(),
+			http.StatusBadRequest,
+		)
+
+	default:
+		http.Error(
+			w,
+			message,
+			http.StatusInternalServerError,
 		)
 	}
 }

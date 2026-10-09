@@ -40,15 +40,11 @@ func (s *Service) Create(
 	name := strings.TrimSpace(input.Name)
 
 	if name == "" {
-		return Project{}, fmt.Errorf(
-			"project name is required",
-		)
+		return Project{}, ErrNameRequired
 	}
 
 	if len(name) > 200 {
-		return Project{}, fmt.Errorf(
-			"project name is too long",
-		)
+		return Project{}, ErrNameTooLong
 	}
 
 	id := uuid.NewString()
@@ -92,7 +88,8 @@ func (s *Service) List(
 		decoded, err := DecodeCursor(input.Cursor)
 		if err != nil {
 			return ProjectPage{}, fmt.Errorf(
-				"invalid cursor: %w",
+				"%w: %v",
+				ErrInvalidCursor,
 				err,
 			)
 		}
@@ -155,4 +152,41 @@ func (s *Service) List(
 		Items:      projects,
 		NextCursor: nextCursor,
 	}, nil
+}
+
+func (s *Service) Get(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+) (Project, error) {
+	if identity.IsAdmin() {
+		project, err := s.repository.GetForTenant(
+			ctx,
+			identity.TenantID,
+			projectID,
+		)
+		if err != nil {
+			return Project{}, fmt.Errorf(
+				"get project as admin: %w",
+				err,
+			)
+		}
+
+		return project, nil
+	}
+
+	project, err := s.repository.GetForUser(
+		ctx,
+		identity.TenantID,
+		identity.UserID,
+		projectID,
+	)
+	if err != nil {
+		return Project{}, fmt.Errorf(
+			"get project as member: %w",
+			err,
+		)
+	}
+
+	return project, nil
 }

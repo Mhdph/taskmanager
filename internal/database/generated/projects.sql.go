@@ -192,6 +192,71 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project
 	return i, err
 }
 
+const getProjectForTenant = `-- name: GetProjectForTenant :one
+SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+FROM projects
+WHERE
+    tenant_id = $1
+    AND id = $2
+    AND archived_at IS NULL
+`
+
+type GetProjectForTenantParams struct {
+	TenantID string
+	ID       pgtype.UUID
+}
+
+func (q *Queries) GetProjectForTenant(ctx context.Context, arg GetProjectForTenantParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectForTenant, arg.TenantID, arg.ID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const getProjectForUser = `-- name: GetProjectForUser :one
+SELECT p.id, p.tenant_id, p.name, p.description, p.created_by_user_id, p.created_at, p.updated_at, p.archived_at
+FROM projects p
+JOIN project_members pm
+    ON pm.project_id = p.id
+WHERE
+    p.tenant_id = $1
+    AND pm.tenant_id = $1
+    AND p.id = $2
+    AND pm.user_id = $3
+    AND p.archived_at IS NULL
+`
+
+type GetProjectForUserParams struct {
+	TenantID string
+	ID       pgtype.UUID
+	UserID   string
+}
+
+func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectForUser, arg.TenantID, arg.ID, arg.UserID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
 const listProjectMembers = `-- name: ListProjectMembers :many
 SELECT project_id, tenant_id, user_id, role, created_at
 FROM project_members

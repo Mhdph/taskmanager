@@ -2,9 +2,11 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -360,4 +362,91 @@ func (r *Repository) ListForUser(
 	}
 
 	return projects, nil
+}
+
+func (r *Repository) GetForTenant(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+) (Project, error) {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return Project{}, fmt.Errorf(
+			"parse project id: %w",
+			ErrInvalidID,
+		)
+	}
+
+	row, err := r.queries.GetProjectForTenant(
+		ctx,
+		db.GetProjectForTenantParams{
+			TenantID: tenantID,
+			ID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return Project{}, wrapGetError(
+			"get project for tenant",
+			err,
+		)
+	}
+
+	return projectFromDB(row), nil
+}
+
+func (r *Repository) GetForUser(
+	ctx context.Context,
+	tenantID string,
+	userID string,
+	projectID string,
+) (Project, error) {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return Project{}, fmt.Errorf(
+			"parse project id: %w",
+			ErrInvalidID,
+		)
+	}
+
+	row, err := r.queries.GetProjectForUser(
+		ctx,
+		db.GetProjectForUserParams{
+			TenantID: tenantID,
+			ID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		return Project{}, wrapGetError(
+			"get project for user",
+			err,
+		)
+	}
+
+	return projectFromDB(row), nil
+}
+
+func wrapGetError(
+	action string,
+	err error,
+) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf(
+			"%s: %w",
+			action,
+			ErrNotFound,
+		)
+	}
+
+	return fmt.Errorf(
+		"%s: %w",
+		action,
+		err,
+	)
 }

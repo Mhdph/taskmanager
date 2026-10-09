@@ -143,6 +143,7 @@ func main() {
 
 		r.Post("/", projectHandler.Create)
 		r.Get("/", projectHandler.List)
+		r.Get("/{projectID}", projectHandler.Get)
 	})
 
 	// -------------------------------------------------------------------------
