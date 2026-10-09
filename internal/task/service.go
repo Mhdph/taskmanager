@@ -578,3 +578,37 @@ func (s *Service) Update(
 
 	return updated, nil
 }
+
+func (s *Service) Archive(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	taskID string,
+) error {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		project.PermissionArchiveTask,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"authorize task archive: %w",
+			err,
+		)
+	}
+
+	if err := s.repository.Archive(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+	); err != nil {
+		return fmt.Errorf(
+			"archive task: %w",
+			err,
+		)
+	}
+
+	return nil
+}

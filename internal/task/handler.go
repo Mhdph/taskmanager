@@ -751,3 +751,98 @@ func parseNullableTime(
 
 	return true, &decoded, nil
 }
+
+func (h *Handler) Archive(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	err := h.service.Archive(
+		r.Context(),
+		identity,
+		projectID,
+		taskID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrTaskNotFound,
+		):
+			http.Error(
+				w,
+				"task not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrNotFound,
+		):
+			http.Error(
+				w,
+				"project not found",
+				http.StatusNotFound,
+			)
+
+		default:
+			log.Printf(
+				"archive task: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to archive task",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.WriteHeader(
+		http.StatusNoContent,
+	)
+}

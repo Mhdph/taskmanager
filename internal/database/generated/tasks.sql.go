@@ -11,6 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveTask = `-- name: ArchiveTask :execrows
+UPDATE tasks
+SET
+    archived_at = NOW(),
+    updated_at = NOW()
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3
+    AND archived_at IS NULL
+`
+
+type ArchiveTaskParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) ArchiveTask(ctx context.Context, arg ArchiveTaskParams) (int64, error) {
+	result, err := q.db.Exec(ctx, archiveTask, arg.TenantID, arg.ProjectID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (
     id,

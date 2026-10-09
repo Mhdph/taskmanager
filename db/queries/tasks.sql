@@ -144,3 +144,14 @@ WHERE
         AND archived_at IS NULL
 
     RETURNING *;
+
+-- name: ArchiveTask :execrows
+UPDATE tasks
+SET
+    archived_at = NOW(),
+    updated_at = NOW()
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3
+    AND archived_at IS NULL;

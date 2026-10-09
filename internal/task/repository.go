@@ -637,3 +637,56 @@ func (r *Repository) Update(
 
 	return taskFromDB(row), nil
 }
+func (r *Repository) Archive(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+) error {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskUUID, err := uuid.Parse(taskID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	affected, err := r.queries.ArchiveTask(
+		ctx,
+		db.ArchiveTaskParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			ID: pgtype.UUID{
+				Bytes: taskUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"archive task: %w",
+			err,
+		)
+	}
+
+	if affected == 0 {
+		return ErrTaskNotFound
+	}
+
+	return nil
+}

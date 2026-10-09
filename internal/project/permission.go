@@ -17,7 +17,8 @@ const (
 
 	PermissionViewStatuses Permission = "view_statuses"
 
-	PermissionCreateTask Permission = "create_task"
-	PermissionViewTasks  Permission = "view_tasks"
-	PermissionEditTask   Permission = "edit_task"
+	PermissionCreateTask  Permission = "create_task"
+	PermissionViewTasks   Permission = "view_tasks"
+	PermissionEditTask    Permission = "edit_task"
+	PermissionArchiveTask Permission = "archive_task"
 )
