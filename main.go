@@ -183,6 +183,10 @@ func main() {
 			r.Route("/tasks", func(r chi.Router) {
 				r.Post("/", taskHandler.Create)
 				r.Get("/", taskHandler.List)
+				r.Route("/{taskID}", func(r chi.Router) {
+					r.Get("/", taskHandler.Get)
+					r.Patch("/", taskHandler.Update)
+				})
 			})
 		})
 	})

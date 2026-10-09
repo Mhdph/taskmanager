@@ -84,3 +84,63 @@ WHERE
         id DESC
 
     LIMIT sqlc.arg(page_limit);
+
+
+
+-- name: UpdateTask :one
+    UPDATE tasks
+    SET
+        title = COALESCE(
+            sqlc.narg(title)::varchar,
+            title
+        ),
+
+        description = CASE
+            WHEN sqlc.arg(update_description)::boolean
+            THEN sqlc.narg(description)::text
+            ELSE description
+        END,
+
+        status_id = COALESCE(
+            sqlc.narg(status_id)::uuid,
+            status_id
+        ),
+
+        priority = COALESCE(
+            sqlc.narg(priority)::varchar,
+            priority
+        ),
+
+        assignee_user_id = CASE
+            WHEN sqlc.arg(update_assignee)::boolean
+            THEN sqlc.narg(assignee_user_id)::text
+            ELSE assignee_user_id
+        END,
+
+        parent_task_id = CASE
+            WHEN sqlc.arg(update_parent_task)::boolean
+            THEN sqlc.narg(parent_task_id)::uuid
+            ELSE parent_task_id
+        END,
+
+        due_at = CASE
+            WHEN sqlc.arg(update_due_at)::boolean
+            THEN sqlc.narg(due_at)::timestamptz
+            ELSE due_at
+        END,
+
+        completed_at = CASE
+            WHEN sqlc.arg(update_completed_at)::boolean
+            THEN sqlc.narg(completed_at)::timestamptz
+            ELSE completed_at
+        END,
+
+        updated_at = NOW()
+
+    WHERE
+        tenant_id = sqlc.arg(tenant_id)
+        AND project_id = sqlc.arg(project_id)
+        AND id = sqlc.arg(id)
+        AND archived_at IS NULL
+
+    RETURNING *;

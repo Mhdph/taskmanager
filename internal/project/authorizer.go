@@ -80,7 +80,8 @@ func managerHasPermission(
 		PermissionManageStatuses,
 		PermissionArchiveProject,
 		PermissionCreateTask,
-		PermissionViewTasks:
+		PermissionViewTasks,
+		PermissionEditTask:
 		return true
 
 	default:
@@ -95,7 +96,8 @@ func memberHasPermission(
 		PermissionViewMembers,
 		PermissionViewStatuses,
 		PermissionCreateTask,
-		PermissionViewTasks:
+		PermissionViewTasks,
+		PermissionEditTask:
 		return true
 
 	default:

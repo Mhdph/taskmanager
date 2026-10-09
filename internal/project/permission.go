@@ -19,4 +19,5 @@ const (
 
 	PermissionCreateTask Permission = "create_task"
 	PermissionViewTasks  Permission = "view_tasks"
+	PermissionEditTask   Permission = "edit_task"
 )

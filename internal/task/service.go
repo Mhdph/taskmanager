@@ -358,3 +358,223 @@ func (s *Service) List(
 		NextCursor: nextCursor,
 	}, nil
 }
+func (s *Service) Get(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	taskID string,
+) (Task, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		project.PermissionViewTasks,
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"authorize task view: %w",
+			err,
+		)
+	}
+
+	item, err := s.repository.GetForProject(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"get task: %w",
+			err,
+		)
+	}
+
+	return item, nil
+}
+
+type UpdateInput struct {
+	Identity auth.Identity
+
+	ProjectID string
+	TaskID    string
+
+	Title *string
+
+	UpdateDescription bool
+	Description       *string
+
+	StatusID *string
+
+	Priority *Priority
+
+	UpdateAssignee bool
+	AssigneeUserID *string
+
+	UpdateParentTask bool
+	ParentTaskID     *string
+
+	UpdateDueAt bool
+	DueAt       *time.Time
+}
+
+func (s *Service) Update(
+	ctx context.Context,
+	input UpdateInput,
+) (Task, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		project.PermissionEditTask,
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"authorize task update: %w",
+			err,
+		)
+	}
+
+	current, err := s.repository.GetForProject(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"get current task: %w",
+			err,
+		)
+	}
+
+	var title *string
+
+	if input.Title != nil {
+		value := strings.TrimSpace(
+			*input.Title,
+		)
+
+		if value == "" ||
+			len(value) > 300 {
+			return Task{},
+				ErrInvalidTitle
+		}
+
+		title = &value
+	}
+
+	if input.Priority != nil {
+		switch *input.Priority {
+		case PriorityLow,
+			PriorityMedium,
+			PriorityHigh,
+			PriorityUrgent:
+
+		default:
+			return Task{},
+				ErrInvalidPriority
+		}
+	}
+	var updateCompletedAt bool
+	var completedAt *time.Time
+
+	if input.StatusID != nil {
+		status, err := s.projectRepository.GetStatus(
+			ctx,
+			input.Identity.TenantID,
+			input.ProjectID,
+			*input.StatusID,
+		)
+		if err != nil {
+			if errors.Is(
+				err,
+				project.ErrStatusNotFound,
+			) {
+				return Task{},
+					ErrStatusNotFound
+			}
+
+			return Task{}, fmt.Errorf(
+				"validate task status: %w",
+				err,
+			)
+		}
+
+		if status.Category ==
+			project.StatusCategoryDone {
+
+			if current.CompletedAt == nil {
+				now := time.Now().UTC()
+
+				updateCompletedAt = true
+				completedAt = &now
+			}
+		} else if current.CompletedAt != nil {
+			updateCompletedAt = true
+			completedAt = nil
+		}
+	}
+	if input.UpdateAssignee &&
+		input.AssigneeUserID != nil {
+
+		_, err := s.projectRepository.GetMemberRole(
+			ctx,
+			input.Identity.TenantID,
+			input.ProjectID,
+			*input.AssigneeUserID,
+		)
+		if err != nil {
+			if errors.Is(
+				err,
+				project.ErrNotFound,
+			) {
+				return Task{},
+					ErrAssigneeNotMember
+			}
+
+			return Task{}, fmt.Errorf(
+				"validate task assignee: %w",
+				err,
+			)
+		}
+	}
+	updated, err := s.repository.Update(
+		ctx,
+		UpdateParams{
+			TenantID: input.Identity.TenantID,
+
+			ProjectID: input.ProjectID,
+			TaskID:    input.TaskID,
+
+			Title: title,
+
+			UpdateDescription: input.UpdateDescription,
+			Description:       input.Description,
+
+			StatusID: input.StatusID,
+
+			Priority: input.Priority,
+
+			UpdateAssignee: input.UpdateAssignee,
+			AssigneeUserID: input.AssigneeUserID,
+
+			UpdateParentTask: input.UpdateParentTask,
+			ParentTaskID:     input.ParentTaskID,
+
+			UpdateDueAt: input.UpdateDueAt,
+			DueAt:       input.DueAt,
+
+			UpdateCompletedAt: updateCompletedAt,
+			CompletedAt:       completedAt,
+		},
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"update task: %w",
+			err,
+		)
+	}
+
+	return updated, nil
+}

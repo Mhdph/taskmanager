@@ -239,3 +239,121 @@ func (q *Queries) ListTasksForProject(ctx context.Context, arg ListTasksForProje
 	}
 	return items, nil
 }
+
+const updateTask = `-- name: UpdateTask :one
+    UPDATE tasks
+    SET
+        title = COALESCE(
+            $1::varchar,
+            title
+        ),
+
+        description = CASE
+            WHEN $2::boolean
+            THEN $3::text
+            ELSE description
+        END,
+
+        status_id = COALESCE(
+            $4::uuid,
+            status_id
+        ),
+
+        priority = COALESCE(
+            $5::varchar,
+            priority
+        ),
+
+        assignee_user_id = CASE
+            WHEN $6::boolean
+            THEN $7::text
+            ELSE assignee_user_id
+        END,
+
+        parent_task_id = CASE
+            WHEN $8::boolean
+            THEN $9::uuid
+            ELSE parent_task_id
+        END,
+
+        due_at = CASE
+            WHEN $10::boolean
+            THEN $11::timestamptz
+            ELSE due_at
+        END,
+
+        completed_at = CASE
+            WHEN $12::boolean
+            THEN $13::timestamptz
+            ELSE completed_at
+        END,
+
+        updated_at = NOW()
+
+    WHERE
+        tenant_id = $14
+        AND project_id = $15
+        AND id = $16
+        AND archived_at IS NULL
+
+    RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
+`
+
+type UpdateTaskParams struct {
+	Title             pgtype.Text
+	UpdateDescription bool
+	Description       pgtype.Text
+	StatusID          pgtype.UUID
+	Priority          pgtype.Text
+	UpdateAssignee    bool
+	AssigneeUserID    pgtype.Text
+	UpdateParentTask  bool
+	ParentTaskID      pgtype.UUID
+	UpdateDueAt       bool
+	DueAt             pgtype.Timestamptz
+	UpdateCompletedAt bool
+	CompletedAt       pgtype.Timestamptz
+	TenantID          string
+	ProjectID         pgtype.UUID
+	ID                pgtype.UUID
+}
+
+func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, error) {
+	row := q.db.QueryRow(ctx, updateTask,
+		arg.Title,
+		arg.UpdateDescription,
+		arg.Description,
+		arg.StatusID,
+		arg.Priority,
+		arg.UpdateAssignee,
+		arg.AssigneeUserID,
+		arg.UpdateParentTask,
+		arg.ParentTaskID,
+		arg.UpdateDueAt,
+		arg.DueAt,
+		arg.UpdateCompletedAt,
+		arg.CompletedAt,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.ID,
+	)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.StatusID,
+		&i.ParentTaskID,
+		&i.Title,
+		&i.Description,
+		&i.Priority,
+		&i.AssigneeUserID,
+		&i.CreatedByUserID,
+		&i.DueAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}

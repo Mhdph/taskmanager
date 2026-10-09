@@ -19,4 +19,11 @@ var (
 	ErrParentTaskNotFound = errors.New(
 		"parent task not found",
 	)
+
+	ErrInvalidParentTask = errors.New(
+		"invalid parent task",
+	)
+	ErrNoChanges = errors.New(
+		"there is no changes in task",
+	)
 )

@@ -441,3 +441,199 @@ func (r *Repository) ListForProject(
 
 	return tasks, nil
 }
+
+type UpdateParams struct {
+	TenantID  string
+	ProjectID string
+	TaskID    string
+
+	Title *string
+
+	UpdateDescription bool
+	Description       *string
+
+	StatusID *string
+
+	Priority *Priority
+
+	UpdateAssignee bool
+	AssigneeUserID *string
+
+	UpdateParentTask bool
+	ParentTaskID     *string
+
+	UpdateDueAt bool
+	DueAt       *time.Time
+
+	UpdateCompletedAt bool
+	CompletedAt       *time.Time
+}
+
+func (r *Repository) Update(
+	ctx context.Context,
+	params UpdateParams,
+) (Task, error) {
+	projectID, err := uuid.Parse(
+		params.ProjectID,
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskID, err := uuid.Parse(
+		params.TaskID,
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	var title pgtype.Text
+	if params.Title != nil {
+		title = pgtype.Text{
+			String: *params.Title,
+			Valid:  true,
+		}
+	}
+
+	var description pgtype.Text
+	if params.Description != nil {
+		description = pgtype.Text{
+			String: *params.Description,
+			Valid:  true,
+		}
+	}
+
+	var statusID pgtype.UUID
+	if params.StatusID != nil {
+		value, err := uuid.Parse(
+			*params.StatusID,
+		)
+		if err != nil {
+			return Task{}, fmt.Errorf(
+				"%w: %v",
+				ErrInvalidID,
+				err,
+			)
+		}
+
+		statusID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	var priority pgtype.Text
+	if params.Priority != nil {
+		priority = pgtype.Text{
+			String: string(
+				*params.Priority,
+			),
+			Valid: true,
+		}
+	}
+
+	var assignee pgtype.Text
+	if params.AssigneeUserID != nil {
+		assignee = pgtype.Text{
+			String: *params.AssigneeUserID,
+			Valid:  true,
+		}
+	}
+
+	var parentTaskID pgtype.UUID
+	if params.ParentTaskID != nil {
+		value, err := uuid.Parse(
+			*params.ParentTaskID,
+		)
+		if err != nil {
+			return Task{}, fmt.Errorf(
+				"%w: %v",
+				ErrInvalidID,
+				err,
+			)
+		}
+
+		parentTaskID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	var dueAt pgtype.Timestamptz
+	if params.DueAt != nil {
+		dueAt = pgtype.Timestamptz{
+			Time:  *params.DueAt,
+			Valid: true,
+		}
+	}
+
+	var completedAt pgtype.Timestamptz
+	if params.CompletedAt != nil {
+		completedAt = pgtype.Timestamptz{
+			Time:  *params.CompletedAt,
+			Valid: true,
+		}
+	}
+
+	row, err := r.queries.UpdateTask(
+		ctx,
+		db.UpdateTaskParams{
+			Title: title,
+
+			UpdateDescription: params.UpdateDescription,
+			Description:       description,
+
+			StatusID: statusID,
+
+			Priority: priority,
+
+			UpdateAssignee: params.UpdateAssignee,
+			AssigneeUserID: assignee,
+
+			UpdateParentTask: params.UpdateParentTask,
+			ParentTaskID:     parentTaskID,
+
+			UpdateDueAt: params.UpdateDueAt,
+			DueAt:       dueAt,
+
+			UpdateCompletedAt: params.UpdateCompletedAt,
+			CompletedAt:       completedAt,
+
+			TenantID: params.TenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectID,
+				Valid: true,
+			},
+
+			ID: pgtype.UUID{
+				Bytes: taskID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		if errors.Is(
+			err,
+			pgx.ErrNoRows,
+		) {
+			return Task{},
+				ErrTaskNotFound
+		}
+
+		return Task{}, fmt.Errorf(
+			"update task: %w",
+			err,
+		)
+	}
+
+	return taskFromDB(row), nil
+}
