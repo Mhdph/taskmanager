@@ -217,6 +217,28 @@ func (q *Queries) DeleteProjectMember(ctx context.Context, arg DeleteProjectMemb
 	return result.RowsAffected(), nil
 }
 
+const deleteProjectStatus = `-- name: DeleteProjectStatus :execrows
+DELETE FROM project_statuses
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3
+`
+
+type DeleteProjectStatusParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) DeleteProjectStatus(ctx context.Context, arg DeleteProjectStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectStatus, arg.TenantID, arg.ProjectID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getProject = `-- name: GetProject :one
 SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
 FROM projects
@@ -335,6 +357,36 @@ func (q *Queries) GetProjectMember(ctx context.Context, arg GetProjectMemberPara
 		&i.TenantID,
 		&i.UserID,
 		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getProjectStatus = `-- name: GetProjectStatus :one
+SELECT id, tenant_id, project_id, name, position, category, created_at
+FROM project_statuses
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3
+`
+
+type GetProjectStatusParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetProjectStatus(ctx context.Context, arg GetProjectStatusParams) (ProjectStatus, error) {
+	row := q.db.QueryRow(ctx, getProjectStatus, arg.TenantID, arg.ProjectID, arg.ID)
+	var i ProjectStatus
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Position,
+		&i.Category,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -667,6 +719,59 @@ func (q *Queries) UpdateProjectMemberRole(ctx context.Context, arg UpdateProject
 		&i.TenantID,
 		&i.UserID,
 		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateProjectStatus = `-- name: UpdateProjectStatus :one
+UPDATE project_statuses
+SET
+    name = COALESCE(
+            $1::varchar,
+            name
+        ),
+    position = COALESCE(
+            $2::integer,
+            position
+        ),
+    category = COALESCE(
+            $3::varchar,
+            category
+        )
+WHERE
+    tenant_id = $4
+    AND project_id = $5
+    AND id = $6
+RETURNING id, tenant_id, project_id, name, position, category, created_at
+`
+
+type UpdateProjectStatusParams struct {
+	Name      pgtype.Text
+	Position  pgtype.Int4
+	Category  pgtype.Text
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) UpdateProjectStatus(ctx context.Context, arg UpdateProjectStatusParams) (ProjectStatus, error) {
+	row := q.db.QueryRow(ctx, updateProjectStatus,
+		arg.Name,
+		arg.Position,
+		arg.Category,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.ID,
+	)
+	var i ProjectStatus
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Position,
+		&i.Category,
 		&i.CreatedAt,
 	)
 	return i, err

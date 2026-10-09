@@ -16,4 +16,9 @@ var (
 	ErrMemberExists      = errors.New("project member already exists")
 	ErrMemberNotFound    = errors.New("project member not found")
 	ErrLastManager       = errors.New("project must have at least one manager")
+
+	ErrInvalidStatus          = errors.New("invalid project status")
+	ErrStatusNotFound         = errors.New("project status not found")
+	ErrStatusAlreadyExists    = errors.New("project status already exists")
+	ErrStatusPositionConflict = errors.New("project status position conflict")
 )

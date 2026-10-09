@@ -167,6 +167,21 @@ func main() {
 					projectHandler.RemoveMember,
 				)
 			})
+
+			r.Route("/statuses", func(r chi.Router) {
+				r.Get("/", projectHandler.ListStatuses)
+				r.Post("/", projectHandler.CreateStatus)
+
+				r.Patch(
+					"/{statusID}",
+					projectHandler.UpdateStatus,
+				)
+
+				r.Delete(
+					"/{statusID}",
+					projectHandler.DeleteStatus,
+				)
+			})
 		})
 	})
 	// -------------------------------------------------------------------------

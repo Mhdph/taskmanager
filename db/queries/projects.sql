@@ -228,3 +228,58 @@ WHERE
     tenant_id = $1
     AND project_id = $2
     AND role = 'manager';
+
+-- name: GetProjectStatus :one
+SELECT *
+FROM project_statuses
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3;
+
+    -- name: CreateProjectStatus :one
+    INSERT INTO project_statuses (
+        id,
+        tenant_id,
+        project_id,
+        name,
+        position,
+        category
+    )
+    VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6
+    )
+    RETURNING *;
+-- name: UpdateProjectStatus :one
+UPDATE project_statuses
+SET
+    name = COALESCE(
+            sqlc.narg(name)::varchar,
+            name
+        ),
+    position = COALESCE(
+            sqlc.narg(position)::integer,
+            position
+        ),
+    category = COALESCE(
+            sqlc.narg(category)::varchar,
+            category
+        )
+WHERE
+    tenant_id = sqlc.arg(tenant_id)
+    AND project_id = sqlc.arg(project_id)
+    AND id = sqlc.arg(id)
+RETURNING *;
+
+
+-- name: DeleteProjectStatus :execrows
+DELETE FROM project_statuses
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3;

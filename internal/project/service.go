@@ -653,3 +653,219 @@ func (h *Handler) ListMembers(
 		)
 	}
 }
+
+type CreateStatusInput struct {
+	Identity  auth.Identity
+	ProjectID string
+
+	Name     string
+	Position int32
+	Category StatusCategory
+}
+
+func (s *Service) CreateStatus(
+	ctx context.Context,
+	input CreateStatusInput,
+) (ProjectStatus, error) {
+	err := s.authorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		PermissionManageStatuses,
+	)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"authorize status management: %w",
+			err,
+		)
+	}
+
+	name := strings.TrimSpace(input.Name)
+
+	if name == "" || len(name) > 80 {
+		return ProjectStatus{}, ErrInvalidStatus
+	}
+
+	if input.Position < 0 {
+		return ProjectStatus{}, ErrInvalidStatus
+	}
+
+	switch input.Category {
+	case StatusCategoryTodo,
+		StatusCategoryInProgress,
+		StatusCategoryDone:
+
+	default:
+		return ProjectStatus{}, ErrInvalidStatus
+	}
+
+	status, err := s.repository.CreateStatus(
+		ctx,
+		CreateStatusParams{
+			ID:        uuid.NewString(),
+			TenantID:  input.Identity.TenantID,
+			ProjectID: input.ProjectID,
+			Name:      name,
+			Position:  input.Position,
+			Category:  input.Category,
+		},
+	)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"create project status: %w",
+			err,
+		)
+	}
+
+	return status, nil
+}
+
+func (s *Service) ListStatuses(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+) ([]ProjectStatus, error) {
+	err := s.authorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		PermissionViewStatuses,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"authorize view statuses: %w",
+			err,
+		)
+	}
+
+	statuses, err := s.repository.ListStatuses(
+		ctx,
+		identity.TenantID,
+		projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list project statuses: %w",
+			err,
+		)
+	}
+
+	return statuses, nil
+}
+
+type UpdateStatusInput struct {
+	Identity  auth.Identity
+	ProjectID string
+	StatusID  string
+
+	Name     *string
+	Position *int32
+	Category *StatusCategory
+}
+
+func (s *Service) UpdateStatus(
+	ctx context.Context,
+	input UpdateStatusInput,
+) (ProjectStatus, error) {
+	err := s.authorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		PermissionManageStatuses,
+	)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"authorize status management: %w",
+			err,
+		)
+	}
+
+	if input.Name == nil &&
+		input.Position == nil &&
+		input.Category == nil {
+		return ProjectStatus{}, ErrNoChanges
+	}
+
+	var name *string
+
+	if input.Name != nil {
+		value := strings.TrimSpace(*input.Name)
+
+		if value == "" || len(value) > 80 {
+			return ProjectStatus{}, ErrInvalidStatus
+		}
+
+		name = &value
+	}
+
+	if input.Position != nil &&
+		*input.Position < 0 {
+		return ProjectStatus{}, ErrInvalidStatus
+	}
+
+	if input.Category != nil {
+		switch *input.Category {
+		case StatusCategoryTodo,
+			StatusCategoryInProgress,
+			StatusCategoryDone:
+
+		default:
+			return ProjectStatus{}, ErrInvalidStatus
+		}
+	}
+
+	status, err := s.repository.UpdateStatus(
+		ctx,
+		UpdateStatusParams{
+			TenantID:  input.Identity.TenantID,
+			ProjectID: input.ProjectID,
+			StatusID:  input.StatusID,
+
+			Name:     name,
+			Position: input.Position,
+			Category: input.Category,
+		},
+	)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"update project status: %w",
+			err,
+		)
+	}
+
+	return status, nil
+}
+
+func (s *Service) DeleteStatus(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	statusID string,
+) error {
+	err := s.authorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		PermissionManageStatuses,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"authorize status management: %w",
+			err,
+		)
+	}
+
+	if err := s.repository.DeleteStatus(
+		ctx,
+		identity.TenantID,
+		projectID,
+		statusID,
+	); err != nil {
+		return fmt.Errorf(
+			"delete project status: %w",
+			err,
+		)
+	}
+
+	return nil
+}

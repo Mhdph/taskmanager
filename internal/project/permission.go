@@ -14,4 +14,6 @@ const (
 	PermissionManageStatuses Permission = "manage_statuses"
 
 	PermissionArchiveProject Permission = "archive_project"
+
+	PermissionViewStatuses Permission = "view_statuses"
 )

@@ -827,3 +827,306 @@ func (r *Repository) CountManagers(
 
 	return count, nil
 }
+
+func projectStatusFromDB(
+	row db.ProjectStatus,
+) ProjectStatus {
+	status := ProjectStatus{
+		TenantID:  row.TenantID,
+		Name:      row.Name,
+		Position:  row.Position,
+		Category:  StatusCategory(row.Category),
+		CreatedAt: row.CreatedAt.Time,
+	}
+
+	if row.ID.Valid {
+		status.ID = uuid.UUID(
+			row.ID.Bytes,
+		).String()
+	}
+
+	if row.ProjectID.Valid {
+		status.ProjectID = uuid.UUID(
+			row.ProjectID.Bytes,
+		).String()
+	}
+
+	return status
+}
+
+func (r *Repository) ListStatuses(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+) ([]ProjectStatus, error) {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	rows, err := r.queries.ListProjectStatuses(
+		ctx,
+		db.ListProjectStatusesParams{
+			TenantID: tenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list project statuses: %w",
+			err,
+		)
+	}
+
+	statuses := make(
+		[]ProjectStatus,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		statuses = append(
+			statuses,
+			projectStatusFromDB(row),
+		)
+	}
+
+	return statuses, nil
+}
+
+type CreateStatusParams struct {
+	ID        string
+	TenantID  string
+	ProjectID string
+
+	Name     string
+	Position int32
+	Category StatusCategory
+}
+
+func (r *Repository) CreateStatus(
+	ctx context.Context,
+	params CreateStatusParams,
+) (ProjectStatus, error) {
+	statusID, err := uuid.Parse(params.ID)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"parse status id: %w",
+			err,
+		)
+	}
+
+	projectID, err := uuid.Parse(params.ProjectID)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	row, err := r.queries.CreateProjectStatus(
+		ctx,
+		db.CreateProjectStatusParams{
+			ID: pgtype.UUID{
+				Bytes: statusID,
+				Valid: true,
+			},
+			TenantID: params.TenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: projectID,
+				Valid: true,
+			},
+			Name:     params.Name,
+			Position: params.Position,
+			Category: string(params.Category),
+		},
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" {
+
+			switch pgErr.ConstraintName {
+			case "project_statuses_project_id_name_key":
+				return ProjectStatus{}, ErrStatusAlreadyExists
+
+			case "project_statuses_project_id_position_key":
+				return ProjectStatus{}, ErrStatusPositionConflict
+			}
+		}
+
+		return ProjectStatus{}, fmt.Errorf(
+			"create project status: %w",
+			err,
+		)
+	}
+
+	return projectStatusFromDB(row), nil
+}
+
+type UpdateStatusParams struct {
+	TenantID  string
+	ProjectID string
+	StatusID  string
+
+	Name     *string
+	Position *int32
+	Category *StatusCategory
+}
+
+func (r *Repository) UpdateStatus(
+	ctx context.Context,
+	params UpdateStatusParams,
+) (ProjectStatus, error) {
+	projectID, err := uuid.Parse(params.ProjectID)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	statusID, err := uuid.Parse(params.StatusID)
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	var name pgtype.Text
+	if params.Name != nil {
+		name = pgtype.Text{
+			String: *params.Name,
+			Valid:  true,
+		}
+	}
+
+	var position pgtype.Int4
+	if params.Position != nil {
+		position = pgtype.Int4{
+			Int32: *params.Position,
+			Valid: true,
+		}
+	}
+
+	var category pgtype.Text
+	if params.Category != nil {
+		category = pgtype.Text{
+			String: string(*params.Category),
+			Valid:  true,
+		}
+	}
+
+	row, err := r.queries.UpdateProjectStatus(
+		ctx,
+		db.UpdateProjectStatusParams{
+			Name:     name,
+			Position: position,
+			Category: category,
+
+			TenantID: params.TenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectID,
+				Valid: true,
+			},
+
+			ID: pgtype.UUID{
+				Bytes: statusID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectStatus{}, ErrStatusNotFound
+		}
+
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" {
+
+			switch pgErr.ConstraintName {
+			case "project_statuses_project_id_name_key":
+				return ProjectStatus{}, ErrStatusAlreadyExists
+
+			case "project_statuses_project_id_position_key":
+				return ProjectStatus{}, ErrStatusPositionConflict
+			}
+		}
+
+		return ProjectStatus{}, fmt.Errorf(
+			"update project status: %w",
+			err,
+		)
+	}
+
+	return projectStatusFromDB(row), nil
+}
+
+func (r *Repository) DeleteStatus(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	statusID string,
+) error {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	statusUUID, err := uuid.Parse(statusID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	affected, err := r.queries.DeleteProjectStatus(
+		ctx,
+		db.DeleteProjectStatusParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			ID: pgtype.UUID{
+				Bytes: statusUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"delete project status: %w",
+			err,
+		)
+	}
+
+	if affected == 0 {
+		return ErrStatusNotFound
+	}
+
+	return nil
+}

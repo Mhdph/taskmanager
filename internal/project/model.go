@@ -31,3 +31,22 @@ type ProjectMember struct {
 
 	CreatedAt time.Time
 }
+type StatusCategory string
+
+const (
+	StatusCategoryTodo       StatusCategory = "todo"
+	StatusCategoryInProgress StatusCategory = "in_progress"
+	StatusCategoryDone       StatusCategory = "done"
+)
+
+type ProjectStatus struct {
+	ID        string
+	TenantID  string
+	ProjectID string
+
+	Name     string
+	Position int32
+	Category StatusCategory
+
+	CreatedAt time.Time
+}

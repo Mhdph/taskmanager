@@ -860,3 +860,445 @@ func (h *Handler) RemoveMember(
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+type createProjectStatusRequest struct {
+	Name     string `json:"name"`
+	Position int32  `json:"position"`
+	Category string `json:"category"`
+}
+
+type updateProjectStatusRequest struct {
+	Name     *string `json:"name"`
+	Position *int32  `json:"position"`
+	Category *string `json:"category"`
+}
+
+type projectStatusResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Position  int32  `json:"position"`
+	Category  string `json:"category"`
+	CreatedAt string `json:"createdAt"`
+}
+
+func toProjectStatusResponse(
+	status ProjectStatus,
+) projectStatusResponse {
+	return projectStatusResponse{
+		ID:       status.ID,
+		Name:     status.Name,
+		Position: status.Position,
+		Category: string(status.Category),
+
+		CreatedAt: status.CreatedAt.
+			UTC().
+			Format(time.RFC3339),
+	}
+}
+
+func (h *Handler) ListStatuses(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	statuses, err := h.service.ListStatuses(
+		r.Context(),
+		identity,
+		projectID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidID):
+			http.Error(
+				w,
+				"invalid project id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrNotFound):
+			http.Error(
+				w,
+				"project not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(err, ErrForbidden):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"list project statuses: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to list statuses",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	response := make(
+		[]projectStatusResponse,
+		0,
+		len(statuses),
+	)
+
+	for _, status := range statuses {
+		response = append(
+			response,
+			toProjectStatusResponse(status),
+		)
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf(
+			"encode project statuses: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) CreateStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	var req createProjectStatusRequest
+
+	if err := json.NewDecoder(r.Body).Decode(
+		&req,
+	); err != nil {
+		http.Error(
+			w,
+			"invalid request body",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	status, err := h.service.CreateStatus(
+		r.Context(),
+		CreateStatusInput{
+			Identity:  identity,
+			ProjectID: projectID,
+			Name:      req.Name,
+			Position:  req.Position,
+			Category: StatusCategory(
+				req.Category,
+			),
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidStatus):
+			http.Error(
+				w,
+				"invalid status",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrStatusAlreadyExists),
+			errors.Is(err, ErrStatusPositionConflict):
+
+			http.Error(
+				w,
+				"status conflict",
+				http.StatusConflict,
+			)
+
+		case errors.Is(err, ErrNotFound):
+			http.Error(
+				w,
+				"project not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(err, ErrForbidden):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"create project status: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to create status",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(
+		http.StatusCreated,
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		toProjectStatusResponse(status),
+	); err != nil {
+		log.Printf(
+			"encode project status: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) UpdateStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	statusID := chi.URLParam(
+		r,
+		"statusID",
+	)
+
+	var req updateProjectStatusRequest
+
+	if err := json.NewDecoder(r.Body).Decode(
+		&req,
+	); err != nil {
+		http.Error(
+			w,
+			"invalid request body",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	var category *StatusCategory
+
+	if req.Category != nil {
+		value := StatusCategory(
+			*req.Category,
+		)
+
+		category = &value
+	}
+
+	status, err := h.service.UpdateStatus(
+		r.Context(),
+		UpdateStatusInput{
+			Identity:  identity,
+			ProjectID: projectID,
+			StatusID:  statusID,
+
+			Name:     req.Name,
+			Position: req.Position,
+			Category: category,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidStatus),
+			errors.Is(err, ErrNoChanges),
+			errors.Is(err, ErrInvalidID):
+
+			http.Error(
+				w,
+				"invalid request",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrStatusNotFound):
+			http.Error(
+				w,
+				"status not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(err, ErrStatusAlreadyExists),
+			errors.Is(err, ErrStatusPositionConflict):
+
+			http.Error(
+				w,
+				"status conflict",
+				http.StatusConflict,
+			)
+
+		case errors.Is(err, ErrForbidden):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"update project status: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to update status",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		toProjectStatusResponse(status),
+	); err != nil {
+		log.Printf(
+			"encode project status: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) DeleteStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	statusID := chi.URLParam(
+		r,
+		"statusID",
+	)
+
+	err := h.service.DeleteStatus(
+		r.Context(),
+		identity,
+		projectID,
+		statusID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidID):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrStatusNotFound):
+			http.Error(
+				w,
+				"status not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(err, ErrForbidden):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"delete project status: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to delete status",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.WriteHeader(
+		http.StatusNoContent,
+	)
+}
