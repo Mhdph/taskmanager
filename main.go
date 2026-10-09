@@ -143,7 +143,11 @@ func main() {
 
 		r.Post("/", projectHandler.Create)
 		r.Get("/", projectHandler.List)
-		r.Get("/{projectID}", projectHandler.Get)
+
+		r.Route("/{projectID}", func(r chi.Router) {
+			r.Get("/", projectHandler.Get)
+			r.Patch("/", projectHandler.Update)
+		})
 	})
 
 	// -------------------------------------------------------------------------

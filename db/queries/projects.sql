@@ -157,3 +157,48 @@ WHERE
     AND p.id = $2
     AND pm.user_id = $3
     AND p.archived_at IS NULL;
+
+-- name: GetProjectMember :one
+SELECT *
+FROM project_members
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND user_id = $3;
+    -- name: UpdateProject :one
+    UPDATE projects
+    SET
+        name = COALESCE(
+            sqlc.narg(name)::varchar,
+            name
+        ),
+        description = CASE
+            WHEN sqlc.arg(update_description)::boolean
+            THEN sqlc.narg(description)::text
+            ELSE description
+        END,
+        updated_at = NOW()
+    WHERE
+        tenant_id = sqlc.arg(tenant_id)
+        AND id = sqlc.arg(id)
+        AND archived_at IS NULL
+    RETURNING *;
+
+-- name: UpdateProject :one
+UPDATE projects
+    SET
+        name = COALESCE(
+            sqlc.narg(name)::varchar,
+            name
+        ),
+        description = CASE
+            WHEN sqlc.arg(update_description)::boolean
+            THEN sqlc.narg(description)::text
+            ELSE description
+        END,
+        updated_at = NOW()
+    WHERE
+        tenant_id = sqlc.arg(tenant_id)
+        AND id = sqlc.arg(id)
+        AND archived_at IS NULL
+    RETURNING *;

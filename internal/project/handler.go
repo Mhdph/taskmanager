@@ -27,6 +27,11 @@ type createProjectRequest struct {
 	Description *string `json:"description"`
 }
 
+type updateProjectRequest struct {
+	Name        *string         `json:"name"`
+	Description json.RawMessage `json:"description"`
+}
+
 type listProjectsResponse struct {
 	Items      []projectResponse `json:"items"`
 	NextCursor *string           `json:"nextCursor"`
@@ -311,5 +316,140 @@ func toProjectResponse(project Project) projectResponse {
 		UpdatedAt: project.UpdatedAt.
 			UTC().
 			Format(time.RFC3339),
+	}
+}
+
+func (h *Handler) Update(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	var req updateProjectRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(
+			w,
+			"invalid request body",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	var description *string
+	updateDescription := false
+
+	if req.Description != nil {
+		updateDescription = true
+
+		if string(req.Description) != "null" {
+			var value string
+
+			if err := json.Unmarshal(
+				req.Description,
+				&value,
+			); err != nil {
+				http.Error(
+					w,
+					"description must be string or null",
+					http.StatusBadRequest,
+				)
+				return
+			}
+
+			description = &value
+		}
+	}
+
+	updated, err := h.service.Update(
+		r.Context(),
+		UpdateInput{
+			Identity:  identity,
+			ProjectID: projectID,
+
+			Name: req.Name,
+
+			UpdateDescription: updateDescription,
+			Description:       description,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidID):
+			http.Error(
+				w,
+				"invalid project id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrInvalidName):
+			http.Error(
+				w,
+				"invalid project name",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrNoChanges):
+			http.Error(
+				w,
+				"no changes provided",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrNotFound):
+			http.Error(
+				w,
+				"project not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(err, ErrForbidden):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"update project: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to update project",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		toProjectResponse(updated),
+	); err != nil {
+		log.Printf(
+			"encode project response: %v",
+			err,
+		)
 	}
 }

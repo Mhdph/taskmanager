@@ -257,6 +257,34 @@ func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserPa
 	return i, err
 }
 
+const getProjectMember = `-- name: GetProjectMember :one
+SELECT project_id, tenant_id, user_id, role, created_at
+FROM project_members
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND user_id = $3
+`
+
+type GetProjectMemberParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	UserID    string
+}
+
+func (q *Queries) GetProjectMember(ctx context.Context, arg GetProjectMemberParams) (ProjectMember, error) {
+	row := q.db.QueryRow(ctx, getProjectMember, arg.TenantID, arg.ProjectID, arg.UserID)
+	var i ProjectMember
+	err := row.Scan(
+		&i.ProjectID,
+		&i.TenantID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listProjectMembers = `-- name: ListProjectMembers :many
 SELECT project_id, tenant_id, user_id, role, created_at
 FROM project_members
@@ -501,4 +529,54 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUs
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateProject = `-- name: UpdateProject :one
+UPDATE projects
+    SET
+        name = COALESCE(
+            $1::varchar,
+            name
+        ),
+        description = CASE
+            WHEN $2::boolean
+            THEN $3::text
+            ELSE description
+        END,
+        updated_at = NOW()
+    WHERE
+        tenant_id = $4
+        AND id = $5
+        AND archived_at IS NULL
+    RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+`
+
+type UpdateProjectParams struct {
+	Name              pgtype.Text
+	UpdateDescription bool
+	Description       pgtype.Text
+	TenantID          string
+	ID                pgtype.UUID
+}
+
+func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProject,
+		arg.Name,
+		arg.UpdateDescription,
+		arg.Description,
+		arg.TenantID,
+		arg.ID,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
 }

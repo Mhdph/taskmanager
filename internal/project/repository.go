@@ -36,6 +36,16 @@ type CreateParams struct {
 	CreatedByUserID string
 }
 
+type UpdateParams struct {
+	TenantID  string
+	ProjectID string
+
+	Name *string
+
+	UpdateDescription bool
+	Description       *string
+}
+
 func (r *Repository) Create(
 	ctx context.Context,
 	params CreateParams,
@@ -449,4 +459,104 @@ func wrapGetError(
 		action,
 		err,
 	)
+}
+func (r *Repository) GetMemberRole(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	userID string,
+) (MemberRole, error) {
+	id, err := uuid.Parse(projectID)
+	if err != nil {
+		return "", fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	member, err := r.queries.GetProjectMember(
+		ctx,
+		db.GetProjectMemberParams{
+			TenantID: tenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+
+		return "", fmt.Errorf(
+			"get project member: %w",
+			err,
+		)
+	}
+
+	return MemberRole(member.Role), nil
+}
+
+func (r *Repository) Update(
+	ctx context.Context,
+	params UpdateParams,
+) (Project, error) {
+	id, err := uuid.Parse(params.ProjectID)
+	if err != nil {
+		return Project{}, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	var name pgtype.Text
+
+	if params.Name != nil {
+		name = pgtype.Text{
+			String: *params.Name,
+			Valid:  true,
+		}
+	}
+
+	var description pgtype.Text
+
+	if params.Description != nil {
+		description = pgtype.Text{
+			String: *params.Description,
+			Valid:  true,
+		}
+	}
+
+	row, err := r.queries.UpdateProject(
+		ctx,
+		db.UpdateProjectParams{
+			Name: name,
+
+			UpdateDescription: params.UpdateDescription,
+			Description:       description,
+
+			TenantID: params.TenantID,
+
+			ID: pgtype.UUID{
+				Bytes: id,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Project{}, ErrNotFound
+		}
+
+		return Project{}, fmt.Errorf(
+			"update project: %w",
+			err,
+		)
+	}
+
+	return projectFromDB(row), nil
 }

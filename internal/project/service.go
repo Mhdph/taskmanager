@@ -26,6 +26,16 @@ type CreateInput struct {
 	Description *string
 }
 
+type UpdateInput struct {
+	Identity  auth.Identity
+	ProjectID string
+
+	Name *string
+
+	UpdateDescription bool
+	Description       *string
+}
+
 type ListInput struct {
 	Identity auth.Identity
 	Limit    int
@@ -184,6 +194,71 @@ func (s *Service) Get(
 	if err != nil {
 		return Project{}, fmt.Errorf(
 			"get project as member: %w",
+			err,
+		)
+	}
+
+	return project, nil
+}
+func (s *Service) Update(
+	ctx context.Context,
+	input UpdateInput,
+) (Project, error) {
+	if !input.Identity.IsAdmin() {
+		role, err := s.repository.GetMemberRole(
+			ctx,
+			input.Identity.TenantID,
+			input.ProjectID,
+			input.Identity.UserID,
+		)
+		if err != nil {
+			return Project{}, fmt.Errorf(
+				"get project membership: %w",
+				err,
+			)
+		}
+
+		if role != MemberRoleManager {
+			return Project{}, ErrForbidden
+		}
+	}
+
+	var name *string
+
+	if input.Name != nil {
+		value := strings.TrimSpace(*input.Name)
+
+		if value == "" {
+			return Project{}, ErrInvalidName
+		}
+
+		if len(value) > 200 {
+			return Project{}, ErrInvalidName
+		}
+
+		name = &value
+	}
+
+	if input.Name == nil && !input.UpdateDescription {
+		return Project{}, ErrNoChanges
+	}
+
+	project, err := s.repository.Update(
+		ctx,
+		UpdateParams{
+			TenantID: input.Identity.TenantID,
+
+			ProjectID: input.ProjectID,
+
+			Name: name,
+
+			UpdateDescription: input.UpdateDescription,
+			Description:       input.Description,
+		},
+	)
+	if err != nil {
+		return Project{}, fmt.Errorf(
+			"update project: %w",
 			err,
 		)
 	}
