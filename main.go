@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/comment"
 	"github.com/mhdph/taskmanager/internal/config"
 	database "github.com/mhdph/taskmanager/internal/database/generated"
 	"github.com/mhdph/taskmanager/internal/hosted"
@@ -142,6 +143,30 @@ func main() {
 	taskHandler := task.NewHandler(
 		taskService,
 	)
+
+	// -------------------------------------------------------------------------
+	// Comment module
+	// -------------------------------------------------------------------------
+
+	commentRepository :=
+		comment.NewRepository(
+			pool,
+			queries,
+		)
+
+	commentService :=
+		comment.NewService(
+			commentRepository,
+			taskRepository,
+			projectRepository,
+			projectAuthorizer,
+		)
+
+	commentHandler :=
+		comment.NewHandler(
+			commentService,
+		)
+
 	// -------------------------------------------------------------------------
 	// Router
 	// -------------------------------------------------------------------------
@@ -188,6 +213,25 @@ func main() {
 					r.Get("/", taskHandler.Get)
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
+					r.Route(
+						"/comments",
+						func(r chi.Router) {
+							r.Post(
+								"/",
+								commentHandler.Create,
+							)
+					
+							r.Get(
+								"/",
+								commentHandler.List,
+							)
+					
+							r.Delete(
+								"/{commentID}",
+								commentHandler.Delete,
+							)
+						},
+					)
 
 					r.Route(
 						"/dependencies",

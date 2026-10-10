@@ -24,4 +24,8 @@ const (
 
 	PermissionViewTaskDependencies   Permission = "view_task_dependencies"
 	PermissionManageTaskDependencies Permission = "manage_task_dependencies"
+
+	PermissionViewTaskComments  Permission = "view_task_comments"
+	PermissionCreateTaskComment Permission = "create_task_comment"
+	PermissionDeleteTaskComment Permission = "delete_task_comment"
 )

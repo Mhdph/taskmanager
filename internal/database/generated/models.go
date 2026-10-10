@@ -55,6 +55,24 @@ type Task struct {
 	ArchivedAt      pgtype.Timestamptz
 }
 
+type TaskComment struct {
+	ID           pgtype.UUID
+	TenantID     string
+	ProjectID    pgtype.UUID
+	TaskID       pgtype.UUID
+	AuthorUserID string
+	Body         string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
+}
+
+type TaskCommentMention struct {
+	CommentID       pgtype.UUID
+	MentionedUserID string
+	CreatedAt       pgtype.Timestamptz
+}
+
 type TaskDependency struct {
 	TenantID        string
 	ProjectID       pgtype.UUID

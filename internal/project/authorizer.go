@@ -84,7 +84,10 @@ func managerHasPermission(
 		PermissionEditTask,
 		PermissionArchiveTask,
 		PermissionViewTaskDependencies,
-		PermissionManageTaskDependencies:
+		PermissionManageTaskDependencies,
+		PermissionViewTaskComments,
+		PermissionCreateTaskComment,
+		PermissionDeleteTaskComment:
 		return true
 
 	default:
@@ -102,7 +105,9 @@ func memberHasPermission(
 		PermissionViewTasks,
 		PermissionEditTask,
 		PermissionViewTaskDependencies,
-		PermissionManageTaskDependencies:
+		PermissionManageTaskDependencies,
+		PermissionViewTaskComments,
+		PermissionCreateTaskComment:
 		return true
 
 	default:
