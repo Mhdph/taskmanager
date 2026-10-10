@@ -44,6 +44,8 @@ type CreateParams struct {
 	CreatedByUserID string
 
 	DueAt *time.Time
+
+	CompletedAt *time.Time
 }
 
 func (r *Repository) Create(
@@ -123,6 +125,15 @@ func (r *Repository) Create(
 		}
 	}
 
+	var completedAt pgtype.Timestamptz
+
+	if params.CompletedAt != nil {
+		completedAt = pgtype.Timestamptz{
+			Time:  *params.CompletedAt,
+			Valid: true,
+		}
+	}
+
 	row, err := r.queries.CreateTask(
 		ctx,
 		db.CreateTaskParams{
@@ -154,7 +165,8 @@ func (r *Repository) Create(
 
 			CreatedByUserID: params.CreatedByUserID,
 
-			DueAt: dueAt,
+			DueAt:       dueAt,
+			CompletedAt: completedAt,
 		},
 	)
 	if err != nil {

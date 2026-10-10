@@ -90,7 +90,8 @@ INSERT INTO tasks (
     priority,
     assignee_user_id,
     created_by_user_id,
-    due_at
+    due_at,
+    completed_at
 )
 VALUES (
     $1,
@@ -103,7 +104,8 @@ VALUES (
     $8,
     $9,
     $10,
-    $11
+    $11,
+    $12
 )
 RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
 `
@@ -120,6 +122,7 @@ type CreateTaskParams struct {
 	AssigneeUserID  pgtype.Text
 	CreatedByUserID string
 	DueAt           pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error) {
@@ -135,6 +138,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		arg.AssigneeUserID,
 		arg.CreatedByUserID,
 		arg.DueAt,
+		arg.CompletedAt,
 	)
 	var i Task
 	err := row.Scan(

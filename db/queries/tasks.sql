@@ -10,7 +10,8 @@ INSERT INTO tasks (
     priority,
     assignee_user_id,
     created_by_user_id,
-    due_at
+    due_at,
+    completed_at
 )
 VALUES (
     sqlc.arg(id),
@@ -23,7 +24,8 @@ VALUES (
     sqlc.arg(priority),
     sqlc.narg(assignee_user_id),
     sqlc.arg(created_by_user_id),
-    sqlc.narg(due_at)
+    sqlc.narg(due_at),
+    sqlc.narg(completed_at)
 )
 RETURNING *;
 -- name: GetTaskForProject :one

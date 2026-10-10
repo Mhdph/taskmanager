@@ -109,7 +109,7 @@ func (s *Service) Create(
 	}
 
 	// Verify status belongs to project.
-	_, err = s.projectRepository.GetStatus(
+	status, err := s.projectRepository.GetStatus(
 		ctx,
 		input.Identity.TenantID,
 		input.ProjectID,
@@ -127,6 +127,13 @@ func (s *Service) Create(
 			"validate task status: %w",
 			err,
 		)
+	}
+
+	var completedAt *time.Time
+
+	if status.Category == project.StatusCategoryDone {
+		now := time.Now().UTC()
+		completedAt = &now
 	}
 
 	// Verify assignee is a project member.
@@ -198,7 +205,8 @@ func (s *Service) Create(
 
 			CreatedByUserID: input.Identity.UserID,
 
-			DueAt: input.DueAt,
+			DueAt:       input.DueAt,
+			CompletedAt: completedAt,
 		},
 	)
 	if err != nil {
@@ -471,6 +479,13 @@ func (s *Service) Update(
 	}
 	assigneeChanged := false
 
+	statusChanged := false
+
+	if input.StatusID != nil {
+		statusChanged =
+			current.StatusID != *input.StatusID
+	}
+
 	if input.UpdateAssignee {
 		assigneeChanged =
 			!sameOptionalString(
@@ -509,6 +524,8 @@ func (s *Service) Update(
 	}
 	var updateCompletedAt bool
 	var completedAt *time.Time
+	var previousStatus *project.ProjectStatus
+	var nextStatus *project.ProjectStatus
 
 	if input.StatusID != nil {
 		status, err := s.projectRepository.GetStatus(
@@ -532,18 +549,42 @@ func (s *Service) Update(
 			)
 		}
 
-		if status.Category ==
-			project.StatusCategoryDone {
+		nextStatus = &status
 
-			if current.CompletedAt == nil {
-				now := time.Now().UTC()
+		if statusChanged {
+			oldStatus, err :=
+				s.projectRepository.GetStatus(
+					ctx,
+					input.Identity.TenantID,
+					input.ProjectID,
+					current.StatusID,
+				)
 
-				updateCompletedAt = true
-				completedAt = &now
+			if err != nil {
+				return Task{}, fmt.Errorf(
+					"get current task status: %w",
+					err,
+				)
 			}
-		} else if current.CompletedAt != nil {
-			updateCompletedAt = true
-			completedAt = nil
+
+			previousStatus = &oldStatus
+		}
+
+		if statusChanged {
+			if status.Category ==
+				project.StatusCategoryDone {
+
+				if current.CompletedAt == nil {
+					now := time.Now().UTC()
+
+					updateCompletedAt = true
+					completedAt = &now
+				}
+
+			} else if current.CompletedAt != nil {
+				updateCompletedAt = true
+				completedAt = nil
+			}
 		}
 	}
 	if input.UpdateAssignee &&
@@ -612,6 +653,19 @@ func (s *Service) Update(
 			ctx,
 			input.Identity,
 			updated,
+		)
+	}
+
+	if statusChanged &&
+		previousStatus != nil &&
+		nextStatus != nil {
+
+		s.sendStatusChangedNotifications(
+			ctx,
+			input.Identity,
+			updated,
+			*previousStatus,
+			*nextStatus,
 		)
 	}
 
@@ -917,5 +971,99 @@ func (s *Service) sendAssignedNotification(
 			"send task assignment notification: %v",
 			err,
 		)
+	}
+}
+func (s *Service) sendStatusChangedNotifications(
+	ctx context.Context,
+	identity auth.Identity,
+	item Task,
+	fromStatus project.ProjectStatus,
+	toStatus project.ProjectStatus,
+) {
+	recipients := make(
+		map[string]struct{},
+	)
+
+	if item.AssigneeUserID != nil {
+		recipients[*item.AssigneeUserID] = struct{}{}
+	}
+
+	if item.CreatedByUserID != "" {
+		recipients[item.CreatedByUserID] = struct{}{}
+	}
+
+	delete(
+		recipients,
+		identity.UserID,
+	)
+
+	for recipientUserID := range recipients {
+
+		actorUserID :=
+			identity.UserID
+
+		projectID :=
+			item.ProjectID
+
+		taskID :=
+			item.ID
+
+		body := fmt.Sprintf(
+			"%s: %s → %s",
+			item.Title,
+			fromStatus.Name,
+			toStatus.Name,
+		)
+
+		err := s.notificationSender.Send(
+			ctx,
+			notification.SendInput{
+				TenantID: identity.TenantID,
+
+				RecipientUserID: recipientUserID,
+
+				Type: notification.EventTaskStatusChanged,
+
+				ActorUserID: &actorUserID,
+
+				ProjectID: &projectID,
+
+				TaskID: &taskID,
+
+				Title: "Task status changed",
+
+				Body: &body,
+
+				Data: map[string]any{
+					"taskId": item.ID,
+
+					"projectId": item.ProjectID,
+
+					"fromStatusId": fromStatus.ID,
+
+					"fromStatusName": fromStatus.Name,
+
+					"fromStatusCategory": string(
+						fromStatus.Category,
+					),
+
+					"toStatusId": toStatus.ID,
+
+					"toStatusName": toStatus.Name,
+
+					"toStatusCategory": string(
+						toStatus.Category,
+					),
+				},
+			},
+		)
+
+		if err != nil {
+			log.Printf(
+				"send task status notification to %s: %v",
+				recipientUserID,
+				err,
+			)
+		}
 	}
 }
