@@ -21,4 +21,7 @@ const (
 	PermissionViewTasks   Permission = "view_tasks"
 	PermissionEditTask    Permission = "edit_task"
 	PermissionArchiveTask Permission = "archive_task"
+
+	PermissionViewTaskDependencies   Permission = "view_task_dependencies"
+	PermissionManageTaskDependencies Permission = "manage_task_dependencies"
 )

@@ -188,6 +188,26 @@ func main() {
 					r.Get("/", taskHandler.Get)
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
+
+					r.Route(
+						"/dependencies",
+						func(r chi.Router) {
+							r.Get(
+								"/",
+								taskHandler.ListDependencies,
+							)
+
+							r.Post(
+								"/",
+								taskHandler.AddDependency,
+							)
+
+							r.Delete(
+								"/{dependsOnTaskID}",
+								taskHandler.RemoveDependency,
+							)
+						},
+					)
 				})
 			})
 		})

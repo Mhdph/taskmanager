@@ -155,3 +155,65 @@ WHERE
     AND project_id = $2
     AND id = $3
     AND archived_at IS NULL;
+
+
+-- name: AddTaskDependency :one
+INSERT INTO task_dependencies (
+        tenant_id,
+        project_id,
+        task_id,
+        depends_on_task_id
+    )
+VALUES (
+        $1,
+        $2,
+        $3,
+        $4
+    )
+RETURNING *;
+
+
+-- name: DeleteTaskDependency :execrows
+DELETE FROM task_dependencies
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND depends_on_task_id = $4;
+
+
+-- name: ListTaskDependencies :many
+SELECT *
+FROM task_dependencies
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+ORDER BY created_at ASC;
+
+
+-- name: TaskDependsTransitivelyOn :one
+WITH RECURSIVE dependency_tree AS (
+    SELECT
+        td.depends_on_task_id
+    FROM task_dependencies td
+    WHERE
+        td.tenant_id = sqlc.arg(tenant_id)
+        AND td.project_id = sqlc.arg(project_id)
+        AND td.task_id = sqlc.arg(start_task_id)
+
+    UNION
+
+    SELECT
+        td.depends_on_task_id
+    FROM task_dependencies td
+    JOIN dependency_tree tree
+        ON td.task_id = tree.depends_on_task_id
+    WHERE
+        td.tenant_id = sqlc.arg(tenant_id)
+        AND td.project_id = sqlc.arg(project_id)
+)
+SELECT (sqlc.arg(target_task_id)::uuid IN (
+    SELECT *
+    FROM dependency_tree
+))::boolean AS exists;

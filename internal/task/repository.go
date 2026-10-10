@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/mhdph/taskmanager/internal/database/generated"
@@ -689,4 +690,304 @@ func (r *Repository) Archive(
 	}
 
 	return nil
+}
+func dependencyFromDB(
+	row db.TaskDependency,
+) Dependency {
+	dependency := Dependency{
+		CreatedAt: row.CreatedAt.Time,
+	}
+
+	if row.TaskID.Valid {
+		dependency.TaskID = uuid.UUID(
+			row.TaskID.Bytes,
+		).String()
+	}
+
+	if row.DependsOnTaskID.Valid {
+		dependency.DependsOnTaskID = uuid.UUID(
+			row.DependsOnTaskID.Bytes,
+		).String()
+	}
+
+	return dependency
+}
+
+func (r *Repository) AddDependency(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+	dependsOnTaskID string,
+) (Dependency, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskUUID, err := uuid.Parse(taskID)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	dependsOnUUID, err := uuid.Parse(
+		dependsOnTaskID,
+	)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"%w: invalid dependency task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	row, err := r.queries.AddTaskDependency(
+		ctx,
+		db.AddTaskDependencyParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			TaskID: pgtype.UUID{
+				Bytes: taskUUID,
+				Valid: true,
+			},
+
+			DependsOnTaskID: pgtype.UUID{
+				Bytes: dependsOnUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" {
+
+			return Dependency{},
+				ErrDependencyExists
+		}
+
+		return Dependency{}, fmt.Errorf(
+			"add task dependency: %w",
+			err,
+		)
+	}
+
+	return dependencyFromDB(row), nil
+}
+
+func (r *Repository) ListDependencies(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+) ([]Dependency, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskUUID, err := uuid.Parse(taskID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	rows, err := r.queries.ListTaskDependencies(
+		ctx,
+		db.ListTaskDependenciesParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			TaskID: pgtype.UUID{
+				Bytes: taskUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list task dependencies: %w",
+			err,
+		)
+	}
+
+	result := make(
+		[]Dependency,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		result = append(
+			result,
+			dependencyFromDB(row),
+		)
+	}
+
+	return result, nil
+}
+func (r *Repository) DeleteDependency(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+	dependsOnTaskID string,
+) error {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskUUID, err := uuid.Parse(taskID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	dependsOnUUID, err := uuid.Parse(
+		dependsOnTaskID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: invalid dependency id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	affected, err := r.queries.DeleteTaskDependency(
+		ctx,
+		db.DeleteTaskDependencyParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			TaskID: pgtype.UUID{
+				Bytes: taskUUID,
+				Valid: true,
+			},
+
+			DependsOnTaskID: pgtype.UUID{
+				Bytes: dependsOnUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"delete task dependency: %w",
+			err,
+		)
+	}
+
+	if affected == 0 {
+		return ErrDependencyNotFound
+	}
+
+	return nil
+}
+func (r *Repository) DependsTransitivelyOn(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	startTaskID string,
+	targetTaskID string,
+) (bool, error) {
+	projectUUID, err := uuid.Parse(
+		projectID,
+	)
+	if err != nil {
+		return false, fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	startUUID, err := uuid.Parse(
+		startTaskID,
+	)
+	if err != nil {
+		return false, fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	targetUUID, err := uuid.Parse(
+		targetTaskID,
+	)
+	if err != nil {
+		return false, fmt.Errorf(
+			"%w: invalid target task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	exists, err := r.queries.TaskDependsTransitivelyOn(
+		ctx,
+		db.TaskDependsTransitivelyOnParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			StartTaskID: pgtype.UUID{
+				Bytes: startUUID,
+				Valid: true,
+			},
+
+			TargetTaskID: pgtype.UUID{
+				Bytes: targetUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf(
+			"check task dependency graph: %w",
+			err,
+		)
+	}
+
+	return exists, nil
 }

@@ -57,3 +57,9 @@ type TaskPage struct {
 	Items      []Task
 	NextCursor *string
 }
+
+type Dependency struct {
+	TaskID          string
+	DependsOnTaskID string
+	CreatedAt       time.Time
+}

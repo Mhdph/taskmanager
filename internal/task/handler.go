@@ -846,3 +846,377 @@ func (h *Handler) Archive(
 		http.StatusNoContent,
 	)
 }
+
+type addTaskDependencyRequest struct {
+	DependsOnTaskID string `json:"dependsOnTaskId"`
+}
+
+type taskDependencyResponse struct {
+	TaskID          string    `json:"taskId"`
+	DependsOnTaskID string    `json:"dependsOnTaskId"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+func toTaskDependencyResponse(
+	dependency Dependency,
+) taskDependencyResponse {
+	return taskDependencyResponse{
+		TaskID: dependency.TaskID,
+
+		DependsOnTaskID: dependency.DependsOnTaskID,
+
+		CreatedAt: dependency.CreatedAt,
+	}
+}
+
+func (h *Handler) AddDependency(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	var req addTaskDependencyRequest
+
+	if err := json.NewDecoder(r.Body).
+		Decode(&req); err != nil {
+
+		http.Error(
+			w,
+			"invalid request body",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	dependency, err := h.service.AddDependency(
+		r.Context(),
+		AddDependencyInput{
+			Identity: identity,
+
+			ProjectID: projectID,
+			TaskID:    taskID,
+
+			DependsOnTaskID: req.DependsOnTaskID,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		),
+			errors.Is(
+				err,
+				ErrSelfDependency,
+			):
+
+			http.Error(
+				w,
+				"invalid dependency",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrTaskNotFound,
+		):
+			http.Error(
+				w,
+				"task not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			ErrDependencyExists,
+		):
+			http.Error(
+				w,
+				"dependency already exists",
+				http.StatusConflict,
+			)
+
+		case errors.Is(
+			err,
+			ErrDependencyCycle,
+		):
+			http.Error(
+				w,
+				"dependency would create a cycle",
+				http.StatusConflict,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"add task dependency: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to add dependency",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(
+		http.StatusCreated,
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		toTaskDependencyResponse(
+			dependency,
+		),
+	); err != nil {
+		log.Printf(
+			"encode dependency response: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) ListDependencies(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	dependencies, err :=
+		h.service.ListDependencies(
+			r.Context(),
+			identity,
+			projectID,
+			taskID,
+		)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrTaskNotFound,
+		):
+			http.Error(
+				w,
+				"task not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"list task dependencies: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to list dependencies",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	response := make(
+		[]taskDependencyResponse,
+		0,
+		len(dependencies),
+	)
+
+	for _, dependency := range dependencies {
+
+		response = append(
+			response,
+			toTaskDependencyResponse(
+				dependency,
+			),
+		)
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).
+		Encode(response); err != nil {
+
+		log.Printf(
+			"encode dependencies: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) RemoveDependency(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := auth.IdentityFromContext(
+		r.Context(),
+	)
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	dependsOnTaskID := chi.URLParam(
+		r,
+		"dependsOnTaskID",
+	)
+
+	err := h.service.RemoveDependency(
+		r.Context(),
+		RemoveDependencyInput{
+			Identity: identity,
+
+			ProjectID: projectID,
+			TaskID:    taskID,
+
+			DependsOnTaskID: dependsOnTaskID,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrDependencyNotFound,
+		):
+			http.Error(
+				w,
+				"dependency not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"remove task dependency: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to remove dependency",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.WriteHeader(
+		http.StatusNoContent,
+	)
+}

@@ -612,3 +612,190 @@ func (s *Service) Archive(
 
 	return nil
 }
+
+type AddDependencyInput struct {
+	Identity auth.Identity
+
+	ProjectID string
+	TaskID    string
+
+	DependsOnTaskID string
+}
+
+func (s *Service) AddDependency(
+	ctx context.Context,
+	input AddDependencyInput,
+) (Dependency, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		project.PermissionManageTaskDependencies,
+	)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"authorize dependency management: %w",
+			err,
+		)
+	}
+
+	if input.TaskID == input.DependsOnTaskID {
+		return Dependency{},
+			ErrSelfDependency
+	}
+
+	// Source task must belong to project.
+	_, err = s.repository.GetForProject(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+	)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"get task: %w",
+			err,
+		)
+	}
+
+	// Dependency target must belong to same project.
+	_, err = s.repository.GetForProject(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.DependsOnTaskID,
+	)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"get dependency task: %w",
+			err,
+		)
+	}
+
+	// If target already depends transitively on source,
+	// adding source -> target creates a cycle.
+	wouldCycle, err := s.repository.DependsTransitivelyOn(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.DependsOnTaskID,
+		input.TaskID,
+	)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"check dependency cycle: %w",
+			err,
+		)
+	}
+
+	if wouldCycle {
+		return Dependency{},
+			ErrDependencyCycle
+	}
+
+	dependency, err := s.repository.AddDependency(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+		input.DependsOnTaskID,
+	)
+	if err != nil {
+		return Dependency{}, fmt.Errorf(
+			"add dependency: %w",
+			err,
+		)
+	}
+
+	return dependency, nil
+}
+
+func (s *Service) ListDependencies(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	taskID string,
+) ([]Dependency, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		project.PermissionViewTaskDependencies,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"authorize dependency view: %w",
+			err,
+		)
+	}
+
+	_, err = s.repository.GetForProject(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get task: %w",
+			err,
+		)
+	}
+
+	items, err := s.repository.ListDependencies(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list dependencies: %w",
+			err,
+		)
+	}
+
+	return items, nil
+}
+
+type RemoveDependencyInput struct {
+	Identity auth.Identity
+
+	ProjectID string
+	TaskID    string
+
+	DependsOnTaskID string
+}
+
+func (s *Service) RemoveDependency(
+	ctx context.Context,
+	input RemoveDependencyInput,
+) error {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		project.PermissionManageTaskDependencies,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"authorize dependency management: %w",
+			err,
+		)
+	}
+
+	if err := s.repository.DeleteDependency(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+		input.DependsOnTaskID,
+	); err != nil {
+		return fmt.Errorf(
+			"remove dependency: %w",
+			err,
+		)
+	}
+
+	return nil
+}

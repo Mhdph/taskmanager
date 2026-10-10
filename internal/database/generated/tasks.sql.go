@@ -11,6 +11,47 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addTaskDependency = `-- name: AddTaskDependency :one
+INSERT INTO task_dependencies (
+        tenant_id,
+        project_id,
+        task_id,
+        depends_on_task_id
+    )
+VALUES (
+        $1,
+        $2,
+        $3,
+        $4
+    )
+RETURNING tenant_id, project_id, task_id, depends_on_task_id, created_at
+`
+
+type AddTaskDependencyParams struct {
+	TenantID        string
+	ProjectID       pgtype.UUID
+	TaskID          pgtype.UUID
+	DependsOnTaskID pgtype.UUID
+}
+
+func (q *Queries) AddTaskDependency(ctx context.Context, arg AddTaskDependencyParams) (TaskDependency, error) {
+	row := q.db.QueryRow(ctx, addTaskDependency,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.DependsOnTaskID,
+	)
+	var i TaskDependency
+	err := row.Scan(
+		&i.TenantID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.DependsOnTaskID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const archiveTask = `-- name: ArchiveTask :execrows
 UPDATE tasks
 SET
@@ -116,6 +157,35 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 	return i, err
 }
 
+const deleteTaskDependency = `-- name: DeleteTaskDependency :execrows
+DELETE FROM task_dependencies
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND depends_on_task_id = $4
+`
+
+type DeleteTaskDependencyParams struct {
+	TenantID        string
+	ProjectID       pgtype.UUID
+	TaskID          pgtype.UUID
+	DependsOnTaskID pgtype.UUID
+}
+
+func (q *Queries) DeleteTaskDependency(ctx context.Context, arg DeleteTaskDependencyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTaskDependency,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.DependsOnTaskID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getTaskForProject = `-- name: GetTaskForProject :one
 SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
 FROM tasks
@@ -153,6 +223,48 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 		&i.ArchivedAt,
 	)
 	return i, err
+}
+
+const listTaskDependencies = `-- name: ListTaskDependencies :many
+SELECT tenant_id, project_id, task_id, depends_on_task_id, created_at
+FROM task_dependencies
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+ORDER BY created_at ASC
+`
+
+type ListTaskDependenciesParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+}
+
+func (q *Queries) ListTaskDependencies(ctx context.Context, arg ListTaskDependenciesParams) ([]TaskDependency, error) {
+	rows, err := q.db.Query(ctx, listTaskDependencies, arg.TenantID, arg.ProjectID, arg.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskDependency
+	for rows.Next() {
+		var i TaskDependency
+		if err := rows.Scan(
+			&i.TenantID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.DependsOnTaskID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTasksForProject = `-- name: ListTasksForProject :many
@@ -264,6 +376,52 @@ func (q *Queries) ListTasksForProject(ctx context.Context, arg ListTasksForProje
 		return nil, err
 	}
 	return items, nil
+}
+
+const taskDependsTransitivelyOn = `-- name: TaskDependsTransitivelyOn :one
+WITH RECURSIVE dependency_tree AS (
+    SELECT
+        td.depends_on_task_id
+    FROM task_dependencies td
+    WHERE
+        td.tenant_id = $2
+        AND td.project_id = $3
+        AND td.task_id = $4
+
+    UNION
+
+    SELECT
+        td.depends_on_task_id
+    FROM task_dependencies td
+    JOIN dependency_tree tree
+        ON td.task_id = tree.depends_on_task_id
+    WHERE
+        td.tenant_id = $2
+        AND td.project_id = $3
+)
+SELECT ($1::uuid IN (
+    SELECT depends_on_task_id
+    FROM dependency_tree
+))::boolean AS exists
+`
+
+type TaskDependsTransitivelyOnParams struct {
+	TargetTaskID pgtype.UUID
+	TenantID     string
+	ProjectID    pgtype.UUID
+	StartTaskID  pgtype.UUID
+}
+
+func (q *Queries) TaskDependsTransitivelyOn(ctx context.Context, arg TaskDependsTransitivelyOnParams) (bool, error) {
+	row := q.db.QueryRow(ctx, taskDependsTransitivelyOn,
+		arg.TargetTaskID,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.StartTaskID,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const updateTask = `-- name: UpdateTask :one

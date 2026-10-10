@@ -23,7 +23,24 @@ var (
 	ErrInvalidParentTask = errors.New(
 		"invalid parent task",
 	)
+
 	ErrNoChanges = errors.New(
-		"there is no changes in task",
+		"no changes provided",
+	)
+
+	ErrDependencyExists = errors.New(
+		"task dependency already exists",
+	)
+
+	ErrDependencyNotFound = errors.New(
+		"task dependency not found",
+	)
+
+	ErrDependencyCycle = errors.New(
+		"task dependency would create a cycle",
+	)
+
+	ErrSelfDependency = errors.New(
+		"task cannot depend on itself",
 	)
 )
