@@ -3,17 +3,33 @@ services:
     image: postgres:17
     container_name: taskmanager-postgres
     restart: unless-stopped
-
     environment:
       POSTGRES_DB: taskmanager
       POSTGRES_USER: taskmanager
       POSTGRES_PASSWORD: taskmanager
-
     ports:
       - "5432:5432"
-
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  minio:
+    image: minio/minio
+    container_name: taskmanager-minio
+    restart: unless-stopped
+
+    command: server /data --console-address ":9001"
+
+    environment:
+      MINIO_ROOT_USER: taskmanager
+      MINIO_ROOT_PASSWORD: taskmanager-secret
+
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+    volumes:
+      - minio_data:/datam 
+
 volumes:
   postgres_data:
+  minio_data:
