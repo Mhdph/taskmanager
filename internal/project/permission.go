@@ -28,4 +28,7 @@ const (
 	PermissionViewTaskComments  Permission = "view_task_comments"
 	PermissionCreateTaskComment Permission = "create_task_comment"
 	PermissionDeleteTaskComment Permission = "delete_task_comment"
+
+	PermissionViewTaskWatchers   Permission = "view_task_watchers"
+	PermissionManageTaskWatchers Permission = "manage_task_watchers"
 )

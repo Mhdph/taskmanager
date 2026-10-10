@@ -63,3 +63,9 @@ type Dependency struct {
 	DependsOnTaskID string
 	CreatedAt       time.Time
 }
+
+type Watcher struct {
+	TaskID    string
+	UserID    string
+	CreatedAt time.Time
+}

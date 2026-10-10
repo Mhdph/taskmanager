@@ -80,3 +80,11 @@ type TaskDependency struct {
 	DependsOnTaskID pgtype.UUID
 	CreatedAt       pgtype.Timestamptz
 }
+
+type TaskWatcher struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	UserID    string
+	CreatedAt pgtype.Timestamptz
+}

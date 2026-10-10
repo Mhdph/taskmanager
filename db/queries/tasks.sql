@@ -219,3 +219,50 @@ SELECT (sqlc.arg(target_task_id)::uuid IN (
     SELECT *
     FROM dependency_tree
 ))::boolean AS exists;
+
+
+-- name: AddTaskWatcher :one
+INSERT INTO task_watchers (
+    tenant_id,
+    project_id,
+    task_id,
+    user_id
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4
+)
+RETURNING *;
+
+
+-- name: ListTaskWatchers :many
+SELECT *
+FROM task_watchers
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+ORDER BY created_at ASC;
+
+
+-- name: DeleteTaskWatcher :execrows
+DELETE FROM task_watchers
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND user_id = $4;
+
+
+-- name: TaskWatcherExists :one
+SELECT EXISTS (
+    SELECT 1
+    FROM task_watchers
+    WHERE
+        tenant_id = $1
+        AND project_id = $2
+        AND task_id = $3
+        AND user_id = $4
+);

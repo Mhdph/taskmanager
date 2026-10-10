@@ -1220,3 +1220,379 @@ func (h *Handler) RemoveDependency(
 		http.StatusNoContent,
 	)
 }
+
+type addTaskWatcherRequest struct {
+	UserID string `json:"userId"`
+}
+
+type taskWatcherResponse struct {
+	UserID    string    `json:"userId"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func toTaskWatcherResponse(
+	watcher Watcher,
+) taskWatcherResponse {
+	return taskWatcherResponse{
+		UserID:    watcher.UserID,
+		CreatedAt: watcher.CreatedAt,
+	}
+}
+
+func (h *Handler) AddWatcher(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	var req addTaskWatcherRequest
+
+	if err := json.NewDecoder(
+		r.Body,
+	).Decode(&req); err != nil {
+
+		http.Error(
+			w,
+			"invalid request body",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	watcher, err :=
+		h.service.AddWatcher(
+			r.Context(),
+			AddWatcherInput{
+				Identity: identity,
+
+				ProjectID: projectID,
+
+				TaskID: taskID,
+
+				UserID: req.UserID,
+			},
+		)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrWatcherNotMember,
+		):
+			http.Error(
+				w,
+				"watcher is not a project member",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrWatcherExists,
+		):
+			http.Error(
+				w,
+				"watcher already exists",
+				http.StatusConflict,
+			)
+
+		case errors.Is(
+			err,
+			ErrTaskNotFound,
+		):
+			http.Error(
+				w,
+				"task not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"add task watcher: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to add watcher",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(
+		http.StatusCreated,
+	)
+
+	if err := json.NewEncoder(w).
+		Encode(
+			toTaskWatcherResponse(
+				watcher,
+			),
+		); err != nil {
+
+		log.Printf(
+			"encode watcher: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) ListWatchers(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	items, err :=
+		h.service.ListWatchers(
+			r.Context(),
+			identity,
+			projectID,
+			taskID,
+		)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrTaskNotFound,
+		):
+			http.Error(
+				w,
+				"task not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"list task watchers: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to list watchers",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	response := make(
+		[]taskWatcherResponse,
+		0,
+		len(items),
+	)
+
+	for _, item := range items {
+		response = append(
+			response,
+			toTaskWatcherResponse(item),
+		)
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).
+		Encode(response); err != nil {
+
+		log.Printf(
+			"encode watchers: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) RemoveWatcher(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	userID := chi.URLParam(
+		r,
+		"userID",
+	)
+
+	err := h.service.RemoveWatcher(
+		r.Context(),
+		RemoveWatcherInput{
+			Identity: identity,
+
+			ProjectID: projectID,
+
+			TaskID: taskID,
+
+			UserID: userID,
+		},
+	)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrWatcherNotFound,
+		):
+			http.Error(
+				w,
+				"watcher not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"remove task watcher: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to remove watcher",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.WriteHeader(
+		http.StatusNoContent,
+	)
+}

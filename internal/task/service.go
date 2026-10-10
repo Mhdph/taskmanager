@@ -992,6 +992,25 @@ func (s *Service) sendStatusChangedNotifications(
 		recipients[item.CreatedByUserID] = struct{}{}
 	}
 
+	watchers, err :=
+		s.repository.ListWatchers(
+			ctx,
+			identity.TenantID,
+			item.ProjectID,
+			item.ID,
+		)
+
+	if err != nil {
+		log.Printf(
+			"list watchers for notification: %v",
+			err,
+		)
+	} else {
+		for _, watcher := range watchers {
+			recipients[watcher.UserID] = struct{}{}
+		}
+	}
+
 	delete(
 		recipients,
 		identity.UserID,
@@ -1066,4 +1085,187 @@ func (s *Service) sendStatusChangedNotifications(
 			)
 		}
 	}
+}
+
+type AddWatcherInput struct {
+	Identity auth.Identity
+
+	ProjectID string
+	TaskID    string
+
+	UserID string
+}
+
+func (s *Service) AddWatcher(
+	ctx context.Context,
+	input AddWatcherInput,
+) (Watcher, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		project.PermissionManageTaskWatchers,
+	)
+	if err != nil {
+		return Watcher{}, fmt.Errorf(
+			"authorize watcher management: %w",
+			err,
+		)
+	}
+
+	_, err = s.repository.GetForProject(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+	)
+	if err != nil {
+		return Watcher{}, fmt.Errorf(
+			"get task: %w",
+			err,
+		)
+	}
+
+	userID := strings.TrimSpace(
+		input.UserID,
+	)
+
+	if userID == "" {
+		return Watcher{},
+			ErrWatcherNotMember
+	}
+
+	_, err =
+		s.projectRepository.GetMemberRole(
+			ctx,
+			input.Identity.TenantID,
+			input.ProjectID,
+			userID,
+		)
+
+	if err != nil {
+		if errors.Is(
+			err,
+			project.ErrNotFound,
+		) {
+			return Watcher{},
+				ErrWatcherNotMember
+		}
+
+		return Watcher{}, fmt.Errorf(
+			"validate watcher membership: %w",
+			err,
+		)
+	}
+
+	watcher, err :=
+		s.repository.AddWatcher(
+			ctx,
+			input.Identity.TenantID,
+			input.ProjectID,
+			input.TaskID,
+			userID,
+		)
+
+	if err != nil {
+		return Watcher{}, fmt.Errorf(
+			"add watcher: %w",
+			err,
+		)
+	}
+
+	return watcher, nil
+}
+
+func (s *Service) ListWatchers(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	taskID string,
+) ([]Watcher, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		project.PermissionViewTaskWatchers,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"authorize watcher view: %w",
+			err,
+		)
+	}
+
+	_, err = s.repository.GetForProject(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get task: %w",
+			err,
+		)
+	}
+
+	items, err :=
+		s.repository.ListWatchers(
+			ctx,
+			identity.TenantID,
+			projectID,
+			taskID,
+		)
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list watchers: %w",
+			err,
+		)
+	}
+
+	return items, nil
+
+}
+
+type RemoveWatcherInput struct {
+	Identity auth.Identity
+
+	ProjectID string
+	TaskID    string
+
+	UserID string
+}
+
+func (s *Service) RemoveWatcher(
+	ctx context.Context,
+	input RemoveWatcherInput,
+) error {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		project.PermissionManageTaskWatchers,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"authorize watcher management: %w",
+			err,
+		)
+	}
+
+	if err := s.repository.RemoveWatcher(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+		input.UserID,
+	); err != nil {
+		return fmt.Errorf(
+			"remove watcher: %w",
+			err,
+		)
+	}
+
+	return nil
 }

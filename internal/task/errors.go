@@ -43,4 +43,16 @@ var (
 	ErrSelfDependency = errors.New(
 		"task cannot depend on itself",
 	)
+
+	ErrWatcherExists = errors.New(
+		"task watcher already exists",
+	)
+
+	ErrWatcherNotFound = errors.New(
+		"task watcher not found",
+	)
+
+	ErrWatcherNotMember = errors.New(
+		"watcher is not a project member",
+	)
 )

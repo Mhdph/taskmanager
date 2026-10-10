@@ -1003,3 +1003,201 @@ func (r *Repository) DependsTransitivelyOn(
 
 	return exists, nil
 }
+
+func watcherFromDB(
+	row db.TaskWatcher,
+) Watcher {
+	item := Watcher{
+		UserID:    row.UserID,
+		CreatedAt: row.CreatedAt.Time,
+	}
+
+	if row.TaskID.Valid {
+		item.TaskID = uuid.UUID(
+			row.TaskID.Bytes,
+		).String()
+	}
+
+	return item
+}
+
+func (r *Repository) AddWatcher(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+	userID string,
+) (Watcher, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return Watcher{}, fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskUUID, err := uuid.Parse(taskID)
+	if err != nil {
+		return Watcher{}, fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	row, err := r.queries.AddTaskWatcher(
+		ctx,
+		db.AddTaskWatcherParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			TaskID: pgtype.UUID{
+				Bytes: taskUUID,
+				Valid: true,
+			},
+
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" {
+
+			return Watcher{},
+				ErrWatcherExists
+		}
+
+		return Watcher{}, fmt.Errorf(
+			"add task watcher: %w",
+			err,
+		)
+	}
+
+	return watcherFromDB(row), nil
+}
+
+func (r *Repository) ListWatchers(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+) ([]Watcher, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskUUID, err := uuid.Parse(taskID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	rows, err := r.queries.ListTaskWatchers(
+		ctx,
+		db.ListTaskWatchersParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			TaskID: pgtype.UUID{
+				Bytes: taskUUID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list task watchers: %w",
+			err,
+		)
+	}
+
+	result := make(
+		[]Watcher,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		result = append(
+			result,
+			watcherFromDB(row),
+		)
+	}
+
+	return result, nil
+}
+func (r *Repository) RemoveWatcher(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+	userID string,
+) error {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: invalid project id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	taskUUID, err := uuid.Parse(taskID)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: invalid task id: %v",
+			ErrInvalidID,
+			err,
+		)
+	}
+
+	affected, err := r.queries.DeleteTaskWatcher(
+		ctx,
+		db.DeleteTaskWatcherParams{
+			TenantID: tenantID,
+
+			ProjectID: pgtype.UUID{
+				Bytes: projectUUID,
+				Valid: true,
+			},
+
+			TaskID: pgtype.UUID{
+				Bytes: taskUUID,
+				Valid: true,
+			},
+
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"remove task watcher: %w",
+			err,
+		)
+	}
+
+	if affected == 0 {
+		return ErrWatcherNotFound
+	}
+
+	return nil
+}

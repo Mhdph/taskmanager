@@ -52,6 +52,47 @@ func (q *Queries) AddTaskDependency(ctx context.Context, arg AddTaskDependencyPa
 	return i, err
 }
 
+const addTaskWatcher = `-- name: AddTaskWatcher :one
+INSERT INTO task_watchers (
+    tenant_id,
+    project_id,
+    task_id,
+    user_id
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4
+)
+RETURNING tenant_id, project_id, task_id, user_id, created_at
+`
+
+type AddTaskWatcherParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	UserID    string
+}
+
+func (q *Queries) AddTaskWatcher(ctx context.Context, arg AddTaskWatcherParams) (TaskWatcher, error) {
+	row := q.db.QueryRow(ctx, addTaskWatcher,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.UserID,
+	)
+	var i TaskWatcher
+	err := row.Scan(
+		&i.TenantID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.UserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const archiveTask = `-- name: ArchiveTask :execrows
 UPDATE tasks
 SET
@@ -190,6 +231,35 @@ func (q *Queries) DeleteTaskDependency(ctx context.Context, arg DeleteTaskDepend
 	return result.RowsAffected(), nil
 }
 
+const deleteTaskWatcher = `-- name: DeleteTaskWatcher :execrows
+DELETE FROM task_watchers
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND user_id = $4
+`
+
+type DeleteTaskWatcherParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	UserID    string
+}
+
+func (q *Queries) DeleteTaskWatcher(ctx context.Context, arg DeleteTaskWatcherParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTaskWatcher,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getTaskForProject = `-- name: GetTaskForProject :one
 SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
 FROM tasks
@@ -259,6 +329,48 @@ func (q *Queries) ListTaskDependencies(ctx context.Context, arg ListTaskDependen
 			&i.ProjectID,
 			&i.TaskID,
 			&i.DependsOnTaskID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskWatchers = `-- name: ListTaskWatchers :many
+SELECT tenant_id, project_id, task_id, user_id, created_at
+FROM task_watchers
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+ORDER BY created_at ASC
+`
+
+type ListTaskWatchersParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+}
+
+func (q *Queries) ListTaskWatchers(ctx context.Context, arg ListTaskWatchersParams) ([]TaskWatcher, error) {
+	rows, err := q.db.Query(ctx, listTaskWatchers, arg.TenantID, arg.ProjectID, arg.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskWatcher
+	for rows.Next() {
+		var i TaskWatcher
+		if err := rows.Scan(
+			&i.TenantID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.UserID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -422,6 +534,37 @@ func (q *Queries) TaskDependsTransitivelyOn(ctx context.Context, arg TaskDepends
 		arg.TenantID,
 		arg.ProjectID,
 		arg.StartTaskID,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const taskWatcherExists = `-- name: TaskWatcherExists :one
+SELECT EXISTS (
+    SELECT 1
+    FROM task_watchers
+    WHERE
+        tenant_id = $1
+        AND project_id = $2
+        AND task_id = $3
+        AND user_id = $4
+)
+`
+
+type TaskWatcherExistsParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	UserID    string
+}
+
+func (q *Queries) TaskWatcherExists(ctx context.Context, arg TaskWatcherExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, taskWatcherExists,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.UserID,
 	)
 	var exists bool
 	err := row.Scan(&exists)
