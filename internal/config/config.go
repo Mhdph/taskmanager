@@ -7,14 +7,22 @@ import (
 
 type Config struct {
 	Environment string
-	Server      ServerConfig
-	Database    DatabaseConfig
-	Hosted      HostedConfig
-}
 
+	Server ServerConfig
+
+	Database DatabaseConfig
+
+	Hosted HostedConfig
+
+	Notification NotificationConfig
+}
 type ServerConfig struct {
 	Host string
 	Port string
+}
+
+type NotificationConfig struct {
+	BaseURL string
 }
 
 type DatabaseConfig struct {
@@ -50,6 +58,12 @@ func Load() (Config, error) {
 
 		Hosted: HostedConfig{
 			GraphQLEndpoint: graphQLEndpoint,
+		},
+
+		Notification: NotificationConfig{
+			BaseURL: os.Getenv(
+				"NOTIFICATION_SERVICE_URL",
+			),
 		},
 	}
 

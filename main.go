@@ -19,6 +19,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/config"
 	database "github.com/mhdph/taskmanager/internal/database/generated"
 	"github.com/mhdph/taskmanager/internal/hosted"
+	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/task"
 )
@@ -87,6 +88,16 @@ func main() {
 		hostedHTTPClient,
 	)
 
+	notificationHTTPClient := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	notificationClient :=
+		notification.NewClient(
+			cfg.Notification.BaseURL,
+			notificationHTTPClient,
+		)
+
 	// -------------------------------------------------------------------------
 	// Authentication
 	// -------------------------------------------------------------------------
@@ -138,6 +149,7 @@ func main() {
 		taskRepository,
 		projectRepository,
 		projectAuthorizer,
+		notificationClient,
 	)
 
 	taskHandler := task.NewHandler(
@@ -160,6 +172,7 @@ func main() {
 			taskRepository,
 			projectRepository,
 			projectAuthorizer,
+			notificationClient,
 		)
 
 	commentHandler :=
@@ -220,12 +233,12 @@ func main() {
 								"/",
 								commentHandler.Create,
 							)
-					
+
 							r.Get(
 								"/",
 								commentHandler.List,
 							)
-					
+
 							r.Delete(
 								"/{commentID}",
 								commentHandler.Delete,

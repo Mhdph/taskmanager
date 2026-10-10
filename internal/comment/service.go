@@ -3,11 +3,13 @@ package comment
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/task"
 )
@@ -20,6 +22,8 @@ type Service struct {
 	projectRepository *project.Repository
 
 	projectAuthorizer *project.Authorizer
+
+	notificationSender NotificationSender
 }
 
 func NewService(
@@ -27,6 +31,7 @@ func NewService(
 	taskRepository *task.Repository,
 	projectRepository *project.Repository,
 	projectAuthorizer *project.Authorizer,
+	notificationSender NotificationSender,
 ) *Service {
 	return &Service{
 		repository: repository,
@@ -36,7 +41,16 @@ func NewService(
 		projectRepository: projectRepository,
 
 		projectAuthorizer: projectAuthorizer,
+
+		notificationSender: notificationSender,
 	}
+}
+
+type NotificationSender interface {
+	Send(
+		ctx context.Context,
+		input notification.SendInput,
+	) error
 }
 
 type CreateInput struct {
@@ -164,6 +178,69 @@ func (s *Service) Create(
 			"create comment: %w",
 			err,
 		)
+	}
+
+	for _, mentionedUserID := range result.MentionedUserIDs {
+
+		if mentionedUserID ==
+			input.Identity.UserID {
+
+			continue
+		}
+
+		actorUserID :=
+			input.Identity.UserID
+
+		projectID :=
+			input.ProjectID
+
+		taskID :=
+			input.TaskID
+
+		commentID :=
+			result.ID
+
+		notificationBody :=
+			result.Body
+
+		err := s.notificationSender.Send(
+			ctx,
+			notification.SendInput{
+				TenantID: input.Identity.TenantID,
+
+				RecipientUserID: mentionedUserID,
+
+				Type: notification.EventCommentMentioned,
+
+				ActorUserID: &actorUserID,
+
+				ProjectID: &projectID,
+
+				TaskID: &taskID,
+
+				CommentID: &commentID,
+
+				Title: "You were mentioned in a comment",
+
+				Body: &notificationBody,
+
+				Data: map[string]any{
+					"commentId": result.ID,
+
+					"taskId": input.TaskID,
+
+					"projectId": input.ProjectID,
+				},
+			},
+		)
+
+		if err != nil {
+			// the failed notification not caused the comment failed
+			log.Printf(
+				"send mention notification: %v",
+				err,
+			)
+		}
 	}
 
 	return result, nil

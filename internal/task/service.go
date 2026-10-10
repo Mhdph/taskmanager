@@ -4,33 +4,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
 )
 
 type Service struct {
 	repository *Repository
 
-	projectRepository *project.Repository
-	projectAuthorizer *project.Authorizer
+	projectRepository  *project.Repository
+	projectAuthorizer  *project.Authorizer
+	notificationSender NotificationSender
 }
 
 func NewService(
 	repository *Repository,
 	projectRepository *project.Repository,
 	projectAuthorizer *project.Authorizer,
+	notificationSender NotificationSender,
 ) *Service {
 	return &Service{
 		repository: repository,
 
 		projectRepository: projectRepository,
+
 		projectAuthorizer: projectAuthorizer,
+
+		notificationSender: notificationSender,
 	}
+}
+
+type NotificationSender interface {
+	Send(
+		ctx context.Context,
+		input notification.SendInput,
+	) error
 }
 
 type CreateInput struct {
@@ -191,6 +205,14 @@ func (s *Service) Create(
 		return Task{}, fmt.Errorf(
 			"create task: %w",
 			err,
+		)
+	}
+
+	if task.AssigneeUserID != nil {
+		s.sendAssignedNotification(
+			ctx,
+			input.Identity,
+			task,
 		)
 	}
 
@@ -447,6 +469,15 @@ func (s *Service) Update(
 			err,
 		)
 	}
+	assigneeChanged := false
+
+	if input.UpdateAssignee {
+		assigneeChanged =
+			!sameOptionalString(
+				current.AssigneeUserID,
+				input.AssigneeUserID,
+			)
+	}
 
 	var title *string
 
@@ -573,6 +604,14 @@ func (s *Service) Update(
 		return Task{}, fmt.Errorf(
 			"update task: %w",
 			err,
+		)
+	}
+
+	if assigneeChanged {
+		s.sendAssignedNotification(
+			ctx,
+			input.Identity,
+			updated,
 		)
 	}
 
@@ -798,4 +837,85 @@ func (s *Service) RemoveDependency(
 	}
 
 	return nil
+}
+
+func sameOptionalString(
+	a *string,
+	b *string,
+) bool {
+	if a == nil && b == nil {
+		return true
+	}
+
+	if a == nil || b == nil {
+		return false
+	}
+
+	return *a == *b
+}
+func (s *Service) sendAssignedNotification(
+	ctx context.Context,
+	identity auth.Identity,
+	item Task,
+) {
+	if item.AssigneeUserID == nil {
+		return
+	}
+
+	if *item.AssigneeUserID ==
+		identity.UserID {
+
+		return
+	}
+
+	actorUserID :=
+		identity.UserID
+
+	projectID :=
+		item.ProjectID
+
+	taskID :=
+		item.ID
+
+	recipientUserID :=
+		*item.AssigneeUserID
+
+	body :=
+		item.Title
+
+	err := s.notificationSender.Send(
+		ctx,
+		notification.SendInput{
+			TenantID: identity.TenantID,
+
+			RecipientUserID: recipientUserID,
+
+			Type: notification.EventTaskAssigned,
+
+			ActorUserID: &actorUserID,
+
+			ProjectID: &projectID,
+
+			TaskID: &taskID,
+
+			Title: "You were assigned a task",
+
+			Body: &body,
+
+			Data: map[string]any{
+				"taskId": item.ID,
+
+				"projectId": item.ProjectID,
+
+				"assigneeUserId": recipientUserID,
+			},
+		},
+	)
+
+	if err != nil {
+		log.Printf(
+			"send task assignment notification: %v",
+			err,
+		)
+	}
 }
