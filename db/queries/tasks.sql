@@ -266,3 +266,62 @@ SELECT EXISTS (
         AND task_id = $3
         AND user_id = $4
 );
+
+-- name: CreateTaskAttachment :one
+INSERT INTO task_attachments (
+    id,
+    tenant_id,
+    project_id,
+    task_id,
+    uploaded_by_user_id,
+    filename,
+    content_type,
+    size_bytes,
+    object_key
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9
+)
+RETURNING *;
+
+
+-- name: ListTaskAttachments :many
+SELECT *
+FROM task_attachments
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND deleted_at IS NULL
+ORDER BY created_at DESC;
+
+
+-- name: GetTaskAttachment :one
+SELECT *
+FROM task_attachments
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND id = $4
+    AND deleted_at IS NULL;
+
+
+-- name: DeleteTaskAttachment :execrows
+UPDATE task_attachments
+SET
+    deleted_at = NOW()
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND id = $4
+    AND deleted_at IS NULL;

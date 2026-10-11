@@ -1201,3 +1201,326 @@ func (r *Repository) RemoveWatcher(
 
 	return nil
 }
+func attachmentFromDB(
+	row db.TaskAttachment,
+) Attachment {
+	item := Attachment{
+		Filename: row.Filename,
+
+		ContentType: row.ContentType,
+
+		SizeBytes: row.SizeBytes,
+
+		ObjectKey: row.ObjectKey,
+
+		UploadedByUserID: row.UploadedByUserID,
+
+		CreatedAt: row.CreatedAt.Time,
+	}
+
+	if row.ID.Valid {
+		item.ID = uuid.UUID(
+			row.ID.Bytes,
+		).String()
+	}
+
+	if row.TaskID.Valid {
+		item.TaskID = uuid.UUID(
+			row.TaskID.Bytes,
+		).String()
+	}
+
+	return item
+}
+
+type CreateAttachmentParams struct {
+	ID string
+
+	TenantID string
+
+	ProjectID string
+	TaskID    string
+
+	UploadedByUserID string
+
+	Filename string
+
+	ContentType string
+
+	SizeBytes int64
+
+	ObjectKey string
+}
+
+func (r *Repository) CreateAttachment(
+	ctx context.Context,
+	params CreateAttachmentParams,
+) (Attachment, error) {
+	id, err := uuid.Parse(params.ID)
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"%w: invalid attachment id",
+			ErrInvalidID,
+		)
+	}
+
+	projectID, err :=
+		uuid.Parse(params.ProjectID)
+
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"%w: invalid project id",
+			ErrInvalidID,
+		)
+	}
+
+	taskID, err :=
+		uuid.Parse(params.TaskID)
+
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"%w: invalid task id",
+			ErrInvalidID,
+		)
+	}
+
+	row, err :=
+		r.queries.CreateTaskAttachment(
+			ctx,
+			db.CreateTaskAttachmentParams{
+				ID: pgtype.UUID{
+					Bytes: id,
+					Valid: true,
+				},
+
+				TenantID: params.TenantID,
+
+				ProjectID: pgtype.UUID{
+					Bytes: projectID,
+					Valid: true,
+				},
+
+				TaskID: pgtype.UUID{
+					Bytes: taskID,
+					Valid: true,
+				},
+
+				UploadedByUserID: params.UploadedByUserID,
+
+				Filename: params.Filename,
+
+				ContentType: params.ContentType,
+
+				SizeBytes: params.SizeBytes,
+
+				ObjectKey: params.ObjectKey,
+			},
+		)
+
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"create attachment metadata: %w",
+			err,
+		)
+	}
+
+	return attachmentFromDB(row), nil
+}
+func (r *Repository) ListAttachments(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+) ([]Attachment, error) {
+	projectUUID, err :=
+		uuid.Parse(projectID)
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: invalid project id",
+			ErrInvalidID,
+		)
+	}
+
+	taskUUID, err :=
+		uuid.Parse(taskID)
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: invalid task id",
+			ErrInvalidID,
+		)
+	}
+
+	rows, err :=
+		r.queries.ListTaskAttachments(
+			ctx,
+			db.ListTaskAttachmentsParams{
+				TenantID: tenantID,
+
+				ProjectID: pgtype.UUID{
+					Bytes: projectUUID,
+					Valid: true,
+				},
+
+				TaskID: pgtype.UUID{
+					Bytes: taskUUID,
+					Valid: true,
+				},
+			},
+		)
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list task attachments: %w",
+			err,
+		)
+	}
+
+	result := make(
+		[]Attachment,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		result = append(
+			result,
+			attachmentFromDB(row),
+		)
+	}
+
+	return result, nil
+}
+func (r *Repository) GetAttachment(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+	attachmentID string,
+) (Attachment, error) {
+	projectUUID, err :=
+		uuid.Parse(projectID)
+
+	if err != nil {
+		return Attachment{}, ErrInvalidID
+	}
+
+	taskUUID, err :=
+		uuid.Parse(taskID)
+
+	if err != nil {
+		return Attachment{}, ErrInvalidID
+	}
+
+	attachmentUUID, err :=
+		uuid.Parse(attachmentID)
+
+	if err != nil {
+		return Attachment{}, ErrInvalidID
+	}
+
+	row, err :=
+		r.queries.GetTaskAttachment(
+			ctx,
+			db.GetTaskAttachmentParams{
+				TenantID: tenantID,
+
+				ProjectID: pgtype.UUID{
+					Bytes: projectUUID,
+					Valid: true,
+				},
+
+				TaskID: pgtype.UUID{
+					Bytes: taskUUID,
+					Valid: true,
+				},
+
+				ID: pgtype.UUID{
+					Bytes: attachmentUUID,
+					Valid: true,
+				},
+			},
+		)
+
+	if err != nil {
+		if errors.Is(
+			err,
+			pgx.ErrNoRows,
+		) {
+			return Attachment{},
+				ErrAttachmentNotFound
+		}
+
+		return Attachment{}, fmt.Errorf(
+			"get attachment: %w",
+			err,
+		)
+	}
+
+	return attachmentFromDB(row), nil
+}
+func (r *Repository) DeleteAttachment(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+	attachmentID string,
+) error {
+	projectUUID, err :=
+		uuid.Parse(projectID)
+
+	if err != nil {
+		return ErrInvalidID
+	}
+
+	taskUUID, err :=
+		uuid.Parse(taskID)
+
+	if err != nil {
+		return ErrInvalidID
+	}
+
+	attachmentUUID, err :=
+		uuid.Parse(attachmentID)
+
+	if err != nil {
+		return ErrInvalidID
+	}
+
+	affected, err :=
+		r.queries.DeleteTaskAttachment(
+			ctx,
+			db.DeleteTaskAttachmentParams{
+				TenantID: tenantID,
+
+				ProjectID: pgtype.UUID{
+					Bytes: projectUUID,
+					Valid: true,
+				},
+
+				TaskID: pgtype.UUID{
+					Bytes: taskUUID,
+					Valid: true,
+				},
+
+				ID: pgtype.UUID{
+					Bytes: attachmentUUID,
+					Valid: true,
+				},
+			},
+		)
+
+	if err != nil {
+		return fmt.Errorf(
+			"delete attachment metadata: %w",
+			err,
+		)
+	}
+
+	if affected == 0 {
+		return ErrAttachmentNotFound
+	}
+
+	return nil
+}

@@ -31,4 +31,8 @@ const (
 
 	PermissionViewTaskWatchers   Permission = "view_task_watchers"
 	PermissionManageTaskWatchers Permission = "manage_task_watchers"
+
+	PermissionViewTaskAttachments Permission = "view_task_attachments"
+
+	PermissionManageTaskAttachments Permission = "manage_task_attachments"
 )

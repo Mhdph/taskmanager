@@ -21,6 +21,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/hosted"
 	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
+	"github.com/mhdph/taskmanager/internal/storage"
 	"github.com/mhdph/taskmanager/internal/task"
 )
 
@@ -68,6 +69,34 @@ func main() {
 	}
 
 	log.Println("database connected")
+
+	// -------------------------------------------------------------------------
+	// Minio
+	// -------------------------------------------------------------------------
+	storageClient, err :=
+		storage.NewClient(
+			cfg.Storage.Endpoint,
+			cfg.Storage.AccessKey,
+			cfg.Storage.SecretKey,
+			cfg.Storage.Bucket,
+			cfg.Storage.UseSSL,
+		)
+
+	if err != nil {
+		log.Fatalf(
+			"create storage client: %v",
+			err,
+		)
+	}
+
+	if err := storageClient.EnsureBucket(
+		ctx,
+	); err != nil {
+		log.Fatalf(
+			"initialize storage bucket: %v",
+			err,
+		)
+	}
 
 	// -------------------------------------------------------------------------
 	// SQLC
@@ -150,6 +179,8 @@ func main() {
 		projectRepository,
 		projectAuthorizer,
 		notificationClient,
+		storageClient,
+		cfg.Storage.MaxUploadSize,
 	)
 
 	taskHandler := task.NewHandler(
@@ -242,6 +273,36 @@ func main() {
 							r.Delete(
 								"/{commentID}",
 								commentHandler.Delete,
+							)
+						},
+					)
+
+					r.Route(
+						"/attachments",
+						func(r chi.Router) {
+							r.Get(
+								"/",
+								taskHandler.ListAttachments,
+							)
+
+							r.Post(
+								"/",
+								taskHandler.UploadAttachment,
+							)
+
+							r.Route(
+								"/{attachmentID}",
+								func(r chi.Router) {
+									r.Get(
+										"/download",
+										taskHandler.DownloadAttachment,
+									)
+
+									r.Delete(
+										"/",
+										taskHandler.DeleteAttachment,
+									)
+								},
 							)
 						},
 					)

@@ -1596,3 +1596,490 @@ func (h *Handler) RemoveWatcher(
 		http.StatusNoContent,
 	)
 }
+
+type attachmentResponse struct {
+	ID string `json:"id"`
+
+	TaskID string `json:"taskId"`
+
+	Filename string `json:"filename"`
+
+	ContentType string `json:"contentType"`
+
+	SizeBytes int64 `json:"sizeBytes"`
+
+	UploadedByUserID string `json:"uploadedByUserId"`
+
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func toAttachmentResponse(
+	item Attachment,
+) attachmentResponse {
+	return attachmentResponse{
+		ID: item.ID,
+
+		TaskID: item.TaskID,
+
+		Filename: item.Filename,
+
+		ContentType: item.ContentType,
+
+		SizeBytes: item.SizeBytes,
+
+		UploadedByUserID: item.UploadedByUserID,
+
+		CreatedAt: item.CreatedAt,
+	}
+}
+
+func (h *Handler) UploadAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID := chi.URLParam(
+		r,
+		"projectID",
+	)
+
+	taskID := chi.URLParam(
+		r,
+		"taskID",
+	)
+
+	if err := r.ParseMultipartForm(
+		32 << 20,
+	); err != nil {
+
+		http.Error(
+			w,
+			"invalid multipart form",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	file, header, err :=
+		r.FormFile("file")
+
+	if err != nil {
+		http.Error(
+			w,
+			"file is required",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	defer file.Close()
+
+	contentType :=
+		header.Header.Get(
+			"Content-Type",
+		)
+
+	attachment, err :=
+		h.service.UploadAttachment(
+			r.Context(),
+			UploadAttachmentInput{
+				Identity: identity,
+
+				ProjectID: projectID,
+
+				TaskID: taskID,
+
+				Filename: header.Filename,
+
+				ContentType: contentType,
+
+				Size: header.Size,
+
+				Reader: file,
+			},
+		)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrAttachmentTooLarge,
+		):
+			http.Error(
+				w,
+				"attachment too large",
+				http.StatusRequestEntityTooLarge,
+			)
+
+		case errors.Is(
+			err,
+			ErrInvalidAttachment,
+		),
+			errors.Is(
+				err,
+				ErrInvalidID,
+			):
+
+			http.Error(
+				w,
+				"invalid attachment",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			ErrTaskNotFound,
+		):
+			http.Error(
+				w,
+				"task not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"upload attachment: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to upload attachment",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(
+		http.StatusCreated,
+	)
+
+	_ = json.NewEncoder(w).
+		Encode(
+			toAttachmentResponse(
+				attachment,
+			),
+		)
+}
+func (h *Handler) ListAttachments(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID :=
+		chi.URLParam(
+			r,
+			"projectID",
+		)
+
+	taskID :=
+		chi.URLParam(
+			r,
+			"taskID",
+		)
+
+	items, err :=
+		h.service.ListAttachments(
+			r.Context(),
+			identity,
+			projectID,
+			taskID,
+		)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrTaskNotFound,
+		):
+			http.Error(
+				w,
+				"task not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"list attachments: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to list attachments",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	response := make(
+		[]attachmentResponse,
+		0,
+		len(items),
+	)
+
+	for _, item := range items {
+		response = append(
+			response,
+			toAttachmentResponse(item),
+		)
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	_ = json.NewEncoder(w).
+		Encode(response)
+}
+
+func (h *Handler) DownloadAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID :=
+		chi.URLParam(
+			r,
+			"projectID",
+		)
+
+	taskID :=
+		chi.URLParam(
+			r,
+			"taskID",
+		)
+
+	attachmentID :=
+		chi.URLParam(
+			r,
+			"attachmentID",
+		)
+
+	result, err :=
+		h.service.GetAttachmentDownload(
+			r.Context(),
+			identity,
+			projectID,
+			taskID,
+			attachmentID,
+		)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrAttachmentNotFound,
+		):
+			http.Error(
+				w,
+				"attachment not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		):
+			http.Error(
+				w,
+				"invalid id",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"download attachment: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to download attachment",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	_ = json.NewEncoder(w).
+		Encode(
+			map[string]any{
+				"url": result.URL,
+
+				"expiresAt": result.ExpiresAt,
+			},
+		)
+}
+
+func (h *Handler) DeleteAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	projectID :=
+		chi.URLParam(
+			r,
+			"projectID",
+		)
+
+	taskID :=
+		chi.URLParam(
+			r,
+			"taskID",
+		)
+
+	attachmentID :=
+		chi.URLParam(
+			r,
+			"attachmentID",
+		)
+
+	err := h.service.DeleteAttachment(
+		r.Context(),
+		identity,
+		projectID,
+		taskID,
+		attachmentID,
+	)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrAttachmentNotFound,
+		):
+			http.Error(
+				w,
+				"attachment not found",
+				http.StatusNotFound,
+			)
+
+		case errors.Is(
+			err,
+			project.ErrForbidden,
+		):
+			http.Error(
+				w,
+				"forbidden",
+				http.StatusForbidden,
+			)
+
+		default:
+			log.Printf(
+				"delete attachment: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to delete attachment",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	w.WriteHeader(
+		http.StatusNoContent,
+	)
+}

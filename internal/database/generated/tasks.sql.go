@@ -202,6 +202,105 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 	return i, err
 }
 
+const createTaskAttachment = `-- name: CreateTaskAttachment :one
+INSERT INTO task_attachments (
+    id,
+    tenant_id,
+    project_id,
+    task_id,
+    uploaded_by_user_id,
+    filename,
+    content_type,
+    size_bytes,
+    object_key
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9
+)
+RETURNING id, tenant_id, project_id, task_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+`
+
+type CreateTaskAttachmentParams struct {
+	ID               pgtype.UUID
+	TenantID         string
+	ProjectID        pgtype.UUID
+	TaskID           pgtype.UUID
+	UploadedByUserID string
+	Filename         string
+	ContentType      string
+	SizeBytes        int64
+	ObjectKey        string
+}
+
+func (q *Queries) CreateTaskAttachment(ctx context.Context, arg CreateTaskAttachmentParams) (TaskAttachment, error) {
+	row := q.db.QueryRow(ctx, createTaskAttachment,
+		arg.ID,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.UploadedByUserID,
+		arg.Filename,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.ObjectKey,
+	)
+	var i TaskAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.UploadedByUserID,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.ObjectKey,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const deleteTaskAttachment = `-- name: DeleteTaskAttachment :execrows
+UPDATE task_attachments
+SET
+    deleted_at = NOW()
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND id = $4
+    AND deleted_at IS NULL
+`
+
+type DeleteTaskAttachmentParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) DeleteTaskAttachment(ctx context.Context, arg DeleteTaskAttachmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTaskAttachment,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTaskDependency = `-- name: DeleteTaskDependency :execrows
 DELETE FROM task_dependencies
 WHERE
@@ -260,6 +359,48 @@ func (q *Queries) DeleteTaskWatcher(ctx context.Context, arg DeleteTaskWatcherPa
 	return result.RowsAffected(), nil
 }
 
+const getTaskAttachment = `-- name: GetTaskAttachment :one
+SELECT id, tenant_id, project_id, task_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+FROM task_attachments
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND id = $4
+    AND deleted_at IS NULL
+`
+
+type GetTaskAttachmentParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetTaskAttachment(ctx context.Context, arg GetTaskAttachmentParams) (TaskAttachment, error) {
+	row := q.db.QueryRow(ctx, getTaskAttachment,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.ID,
+	)
+	var i TaskAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.UploadedByUserID,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.ObjectKey,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getTaskForProject = `-- name: GetTaskForProject :one
 SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
 FROM tasks
@@ -297,6 +438,55 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 		&i.ArchivedAt,
 	)
 	return i, err
+}
+
+const listTaskAttachments = `-- name: ListTaskAttachments :many
+SELECT id, tenant_id, project_id, task_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+FROM task_attachments
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND task_id = $3
+    AND deleted_at IS NULL
+ORDER BY created_at DESC
+`
+
+type ListTaskAttachmentsParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+}
+
+func (q *Queries) ListTaskAttachments(ctx context.Context, arg ListTaskAttachmentsParams) ([]TaskAttachment, error) {
+	rows, err := q.db.Query(ctx, listTaskAttachments, arg.TenantID, arg.ProjectID, arg.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskAttachment
+	for rows.Next() {
+		var i TaskAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.UploadedByUserID,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.ObjectKey,
+			&i.CreatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTaskDependencies = `-- name: ListTaskDependencies :many

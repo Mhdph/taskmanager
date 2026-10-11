@@ -69,3 +69,20 @@ type Watcher struct {
 	UserID    string
 	CreatedAt time.Time
 }
+type Attachment struct {
+	ID string
+
+	TaskID string
+
+	Filename string
+
+	ContentType string
+
+	SizeBytes int64
+
+	ObjectKey string
+
+	UploadedByUserID string
+
+	CreatedAt time.Time
+}

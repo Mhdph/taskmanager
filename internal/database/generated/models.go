@@ -55,6 +55,20 @@ type Task struct {
 	ArchivedAt      pgtype.Timestamptz
 }
 
+type TaskAttachment struct {
+	ID               pgtype.UUID
+	TenantID         string
+	ProjectID        pgtype.UUID
+	TaskID           pgtype.UUID
+	UploadedByUserID string
+	Filename         string
+	ContentType      string
+	SizeBytes        int64
+	ObjectKey        string
+	CreatedAt        pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
+}
+
 type TaskComment struct {
 	ID           pgtype.UUID
 	TenantID     string

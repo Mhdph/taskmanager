@@ -89,7 +89,9 @@ func managerHasPermission(
 		PermissionCreateTaskComment,
 		PermissionDeleteTaskComment,
 		PermissionViewTaskWatchers,
-		PermissionManageTaskWatchers:
+		PermissionManageTaskWatchers,
+		PermissionViewTaskAttachments,
+		PermissionManageTaskAttachments:
 		return true
 
 	default:
@@ -111,7 +113,9 @@ func memberHasPermission(
 		PermissionViewTaskComments,
 		PermissionCreateTaskComment,
 		PermissionViewTaskWatchers,
-		PermissionManageTaskWatchers:
+		PermissionManageTaskWatchers,
+		PermissionViewTaskAttachments,
+		PermissionManageTaskAttachments:
 		return true
 
 	default:

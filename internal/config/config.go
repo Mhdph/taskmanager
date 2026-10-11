@@ -15,10 +15,25 @@ type Config struct {
 	Hosted HostedConfig
 
 	Notification NotificationConfig
+
+	Storage StorageConfig
 }
 type ServerConfig struct {
 	Host string
 	Port string
+}
+
+type StorageConfig struct {
+	Endpoint string
+
+	AccessKey string
+	SecretKey string
+
+	Bucket string
+
+	UseSSL bool
+
+	MaxUploadSize int64
 }
 
 type NotificationConfig struct {
@@ -64,6 +79,27 @@ func Load() (Config, error) {
 			BaseURL: os.Getenv(
 				"NOTIFICATION_SERVICE_URL",
 			),
+		},
+		Storage: StorageConfig{
+			Endpoint: os.Getenv(
+				"MINIO_ENDPOINT",
+			),
+
+			AccessKey: os.Getenv(
+				"MINIO_ACCESS_KEY",
+			),
+
+			SecretKey: os.Getenv(
+				"MINIO_SECRET_KEY",
+			),
+
+			Bucket: os.Getenv(
+				"MINIO_BUCKET",
+			),
+
+			UseSSL: false,
+
+			MaxUploadSize: 25 * 1024 * 1024,
 		},
 	}
 

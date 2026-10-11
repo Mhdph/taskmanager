@@ -55,4 +55,16 @@ var (
 	ErrWatcherNotMember = errors.New(
 		"watcher is not a project member",
 	)
+
+	ErrAttachmentNotFound = errors.New(
+		"attachment not found",
+	)
+
+	ErrAttachmentTooLarge = errors.New(
+		"attachment too large",
+	)
+
+	ErrInvalidAttachment = errors.New(
+		"invalid attachment",
+	)
 )

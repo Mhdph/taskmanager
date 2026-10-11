@@ -13,7 +13,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   minio:
-    image: minio/minio
+    build:
+      context: ./docker/minio
+    image: taskmanager-minio:local
     container_name: taskmanager-minio
     restart: unless-stopped
 
@@ -28,7 +30,7 @@ services:
       - "9001:9001"
 
     volumes:
-      - minio_data:/datam 
+      - minio_data:/data
 
 volumes:
   postgres_data:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -13,14 +14,20 @@ import (
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
+	"github.com/mhdph/taskmanager/internal/storage"
 )
 
 type Service struct {
 	repository *Repository
 
-	projectRepository  *project.Repository
-	projectAuthorizer  *project.Authorizer
+	projectRepository *project.Repository
+	projectAuthorizer *project.Authorizer
+
 	notificationSender NotificationSender
+
+	fileStorage FileStorage
+
+	maxUploadSize int64
 }
 
 func NewService(
@@ -28,6 +35,8 @@ func NewService(
 	projectRepository *project.Repository,
 	projectAuthorizer *project.Authorizer,
 	notificationSender NotificationSender,
+	fileStorage FileStorage,
+	maxUploadSize int64,
 ) *Service {
 	return &Service{
 		repository: repository,
@@ -37,6 +46,10 @@ func NewService(
 		projectAuthorizer: projectAuthorizer,
 
 		notificationSender: notificationSender,
+
+		fileStorage: fileStorage,
+
+		maxUploadSize: maxUploadSize,
 	}
 }
 
@@ -1263,6 +1276,349 @@ func (s *Service) RemoveWatcher(
 	); err != nil {
 		return fmt.Errorf(
 			"remove watcher: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+type FileStorage interface {
+	Upload(
+		ctx context.Context,
+		input storage.UploadInput,
+	) error
+
+	Delete(
+		ctx context.Context,
+		objectKey string,
+	) error
+
+	PresignedDownloadURL(
+		ctx context.Context,
+		objectKey string,
+		filename string,
+		expiry time.Duration,
+	) (string, error)
+}
+type UploadAttachmentInput struct {
+	Identity auth.Identity
+
+	ProjectID string
+	TaskID    string
+
+	Filename string
+
+	ContentType string
+
+	Size int64
+
+	Reader io.Reader
+}
+
+func (s *Service) UploadAttachment(
+	ctx context.Context,
+	input UploadAttachmentInput,
+) (Attachment, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		input.Identity,
+		input.ProjectID,
+		project.PermissionManageTaskAttachments,
+	)
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"authorize attachment upload: %w",
+			err,
+		)
+	}
+
+	_, err = s.repository.GetForProject(
+		ctx,
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+	)
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"get task: %w",
+			err,
+		)
+	}
+
+	filename :=
+		strings.TrimSpace(
+			input.Filename,
+		)
+
+	if filename == "" {
+		return Attachment{},
+			ErrInvalidAttachment
+	}
+
+	if input.Size <= 0 {
+		return Attachment{},
+			ErrInvalidAttachment
+	}
+
+	if input.Size >
+		s.maxUploadSize {
+
+		return Attachment{},
+			ErrAttachmentTooLarge
+	}
+
+	attachmentID :=
+		uuid.NewString()
+
+	objectKey := fmt.Sprintf(
+		"tenants/%s/projects/%s/tasks/%s/%s",
+		input.Identity.TenantID,
+		input.ProjectID,
+		input.TaskID,
+		attachmentID,
+	)
+
+	contentType :=
+		input.ContentType
+
+	if contentType == "" {
+		contentType =
+			"application/octet-stream"
+	}
+
+	err = s.fileStorage.Upload(
+		ctx,
+		storage.UploadInput{
+			ObjectKey: objectKey,
+
+			Reader: input.Reader,
+
+			Size: input.Size,
+
+			ContentType: contentType,
+		},
+	)
+
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"upload attachment object: %w",
+			err,
+		)
+	}
+
+	attachment, err :=
+		s.repository.CreateAttachment(
+			ctx,
+			CreateAttachmentParams{
+				ID: attachmentID,
+
+				TenantID: input.Identity.TenantID,
+
+				ProjectID: input.ProjectID,
+
+				TaskID: input.TaskID,
+
+				UploadedByUserID: input.Identity.UserID,
+
+				Filename: filename,
+
+				ContentType: contentType,
+
+				SizeBytes: input.Size,
+
+				ObjectKey: objectKey,
+			},
+		)
+
+	if err != nil {
+		// DB fail شده ولی object روی MinIO
+		// ساخته شده. تلاش می‌کنیم orphan نشود.
+		if cleanupErr :=
+			s.fileStorage.Delete(
+				ctx,
+				objectKey,
+			); cleanupErr != nil {
+
+			log.Printf(
+				"cleanup orphan attachment %s: %v",
+				objectKey,
+				cleanupErr,
+			)
+		}
+
+		return Attachment{}, fmt.Errorf(
+			"save attachment metadata: %w",
+			err,
+		)
+	}
+
+	return attachment, nil
+}
+func (s *Service) ListAttachments(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	taskID string,
+) ([]Attachment, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		project.PermissionViewTaskAttachments,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"authorize attachment view: %w",
+			err,
+		)
+	}
+
+	_, err = s.repository.GetForProject(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get task: %w",
+			err,
+		)
+	}
+
+	return s.repository.ListAttachments(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+	)
+}
+
+type AttachmentDownload struct {
+	URL string
+
+	ExpiresAt time.Time
+}
+
+func (s *Service) GetAttachmentDownload(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	taskID string,
+	attachmentID string,
+) (AttachmentDownload, error) {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		project.PermissionViewTaskAttachments,
+	)
+	if err != nil {
+		return AttachmentDownload{},
+			fmt.Errorf(
+				"authorize attachment download: %w",
+				err,
+			)
+	}
+
+	attachment, err :=
+		s.repository.GetAttachment(
+			ctx,
+			identity.TenantID,
+			projectID,
+			taskID,
+			attachmentID,
+		)
+
+	if err != nil {
+		return AttachmentDownload{},
+			err
+	}
+
+	expiry :=
+		5 * time.Minute
+
+	downloadURL, err :=
+		s.fileStorage.
+			PresignedDownloadURL(
+				ctx,
+				attachment.ObjectKey,
+				attachment.Filename,
+				expiry,
+			)
+
+	if err != nil {
+		return AttachmentDownload{},
+			fmt.Errorf(
+				"create download url: %w",
+				err,
+			)
+	}
+
+	return AttachmentDownload{
+		URL: downloadURL,
+
+		ExpiresAt: time.Now().
+			UTC().
+			Add(expiry),
+	}, nil
+}
+func (s *Service) DeleteAttachment(
+	ctx context.Context,
+	identity auth.Identity,
+	projectID string,
+	taskID string,
+	attachmentID string,
+) error {
+	err := s.projectAuthorizer.Require(
+		ctx,
+		identity,
+		projectID,
+		project.PermissionManageTaskAttachments,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"authorize attachment delete: %w",
+			err,
+		)
+	}
+
+	attachment, err :=
+		s.repository.GetAttachment(
+			ctx,
+			identity.TenantID,
+			projectID,
+			taskID,
+			attachmentID,
+		)
+
+	if err != nil {
+		return err
+	}
+
+	err = s.fileStorage.Delete(
+		ctx,
+		attachment.ObjectKey,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"delete attachment object: %w",
+			err,
+		)
+	}
+
+	err = s.repository.DeleteAttachment(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+		attachmentID,
+	)
+
+	if err != nil {
+		return fmt.Errorf(
+			"delete attachment metadata: %w",
 			err,
 		)
 	}
