@@ -38,7 +38,8 @@ type createTaskRequest struct {
 
 	AssigneeUserID *string `json:"assigneeUserId"`
 
-	DueAt *time.Time `json:"dueAt"`
+	StartAt *time.Time `json:"startAt"`
+	DueAt   *time.Time `json:"dueAt"`
 }
 
 type updateTaskRequest struct {
@@ -54,7 +55,8 @@ type updateTaskRequest struct {
 
 	ParentTaskID json.RawMessage `json:"parentTaskId"`
 
-	DueAt json.RawMessage `json:"dueAt"`
+	StartAt json.RawMessage `json:"startAt"`
+	DueAt   json.RawMessage `json:"dueAt"`
 }
 
 type taskResponse struct {
@@ -69,10 +71,10 @@ type taskResponse struct {
 
 	Priority string `json:"priority"`
 
-	AssigneeUserID *string `json:"assigneeUserId"`
-
-	DueAt       *time.Time `json:"dueAt"`
-	CompletedAt *time.Time `json:"completedAt"`
+	AssigneeUserID *string    `json:"assigneeUserId"`
+	StartAt        *time.Time `json:"startAt"`
+	DueAt          *time.Time `json:"dueAt"`
+	CompletedAt    *time.Time `json:"completedAt"`
 
 	CreatedByUserID string `json:"createdByUserId"`
 
@@ -136,11 +138,19 @@ func (h *Handler) Create(
 
 			AssigneeUserID: req.AssigneeUserID,
 
-			DueAt: req.DueAt,
+			StartAt: req.StartAt,
+			DueAt:   req.DueAt,
 		},
 	)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrInvalidTaskDateRange):
+			http.Error(
+				w,
+				ErrInvalidTaskDateRange.Error(),
+				http.StatusBadRequest,
+			)
+
 		case errors.Is(err, ErrInvalidTitle):
 			http.Error(
 				w,
@@ -540,6 +550,20 @@ func (h *Handler) Update(
 		return
 	}
 
+	updateStartAt,
+		startAt,
+		err := parseNullableTime(
+		req.StartAt,
+	)
+	if err != nil {
+		http.Error(
+			w,
+			"invalid startAt",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
 	updateDueAt,
 		dueAt,
 		err := parseNullableTime(
@@ -587,12 +611,22 @@ func (h *Handler) Update(
 			UpdateParentTask: updateParentTask,
 			ParentTaskID:     parentTaskID,
 
+			UpdateStartAt: updateStartAt,
+			StartAt:       startAt,
+
 			UpdateDueAt: updateDueAt,
 			DueAt:       dueAt,
 		},
 	)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrInvalidTaskDateRange):
+			http.Error(
+				w,
+				ErrInvalidTaskDateRange.Error(),
+				http.StatusBadRequest,
+			)
+
 		case errors.Is(err, ErrInvalidID),
 			errors.Is(err, ErrInvalidTitle),
 			errors.Is(err, ErrInvalidPriority),
@@ -687,6 +721,7 @@ func toTaskResponse(
 		Priority: string(task.Priority),
 
 		AssigneeUserID: task.AssigneeUserID,
+		StartAt:        task.StartAt,
 
 		DueAt:       task.DueAt,
 		CompletedAt: task.CompletedAt,

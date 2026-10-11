@@ -43,6 +43,8 @@ type CreateParams struct {
 
 	CreatedByUserID string
 
+	StartAt *time.Time
+
 	DueAt *time.Time
 
 	CompletedAt *time.Time
@@ -125,6 +127,15 @@ func (r *Repository) Create(
 		}
 	}
 
+	var startAt pgtype.Timestamptz
+
+	if params.StartAt != nil {
+		startAt = pgtype.Timestamptz{
+			Time:  *params.StartAt,
+			Valid: true,
+		}
+	}
+
 	var completedAt pgtype.Timestamptz
 
 	if params.CompletedAt != nil {
@@ -165,7 +176,9 @@ func (r *Repository) Create(
 
 			CreatedByUserID: params.CreatedByUserID,
 
-			DueAt:       dueAt,
+			DueAt:   dueAt,
+			StartAt: startAt,
+
 			CompletedAt: completedAt,
 		},
 	)
@@ -225,6 +238,11 @@ func taskFromDB(
 	if row.AssigneeUserID.Valid {
 		value := row.AssigneeUserID.String
 		task.AssigneeUserID = &value
+	}
+
+	if row.StartAt.Valid {
+		value := row.StartAt.Time
+		task.StartAt = &value
 	}
 
 	if row.DueAt.Valid {
@@ -475,6 +493,9 @@ type UpdateParams struct {
 	UpdateParentTask bool
 	ParentTaskID     *string
 
+	UpdateStartAt bool
+	StartAt       *time.Time
+
 	UpdateDueAt bool
 	DueAt       *time.Time
 
@@ -580,6 +601,14 @@ func (r *Repository) Update(
 		}
 	}
 
+	var startAt pgtype.Timestamptz
+	if params.StartAt != nil {
+		startAt = pgtype.Timestamptz{
+			Time:  *params.StartAt,
+			Valid: true,
+		}
+	}
+
 	var dueAt pgtype.Timestamptz
 	if params.DueAt != nil {
 		dueAt = pgtype.Timestamptz{
@@ -613,6 +642,9 @@ func (r *Repository) Update(
 
 			UpdateParentTask: params.UpdateParentTask,
 			ParentTaskID:     parentTaskID,
+
+			UpdateStartAt: params.UpdateStartAt,
+			StartAt:       startAt,
 
 			UpdateDueAt: params.UpdateDueAt,
 			DueAt:       dueAt,

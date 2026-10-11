@@ -61,7 +61,8 @@ type NotificationSender interface {
 }
 
 type CreateInput struct {
-	Identity  auth.Identity
+	Identity auth.Identity
+
 	ProjectID string
 
 	StatusID string
@@ -75,7 +76,8 @@ type CreateInput struct {
 
 	AssigneeUserID *string
 
-	DueAt *time.Time
+	StartAt *time.Time
+	DueAt   *time.Time
 }
 
 func (s *Service) Create(
@@ -119,6 +121,12 @@ func (s *Service) Create(
 
 	default:
 		return Task{}, ErrInvalidPriority
+	}
+
+	if input.StartAt != nil &&
+		input.DueAt != nil &&
+		input.StartAt.After(*input.DueAt) {
+		return Task{}, ErrInvalidTaskDateRange
 	}
 
 	// Verify status belongs to project.
@@ -218,6 +226,7 @@ func (s *Service) Create(
 
 			CreatedByUserID: input.Identity.UserID,
 
+			StartAt:     input.StartAt,
 			DueAt:       input.DueAt,
 			CompletedAt: completedAt,
 		},
@@ -456,6 +465,8 @@ type UpdateInput struct {
 
 	UpdateParentTask bool
 	ParentTaskID     *string
+	UpdateStartAt    bool
+	StartAt          *time.Time
 
 	UpdateDueAt bool
 	DueAt       *time.Time
@@ -490,6 +501,22 @@ func (s *Service) Update(
 			err,
 		)
 	}
+	effectiveStartAt := current.StartAt
+	effectiveDueAt := current.DueAt
+
+	if input.UpdateStartAt {
+		effectiveStartAt = input.StartAt
+	}
+	if input.UpdateDueAt {
+		effectiveDueAt = input.DueAt
+	}
+
+	if effectiveStartAt != nil &&
+		effectiveDueAt != nil &&
+		effectiveStartAt.After(*effectiveDueAt) {
+		return Task{}, ErrInvalidTaskDateRange
+	}
+
 	assigneeChanged := false
 
 	statusChanged := false
@@ -646,6 +673,9 @@ func (s *Service) Update(
 
 			UpdateParentTask: input.UpdateParentTask,
 			ParentTaskID:     input.ParentTaskID,
+
+			UpdateStartAt: input.UpdateStartAt,
+			StartAt:       input.StartAt,
 
 			UpdateDueAt: input.UpdateDueAt,
 			DueAt:       input.DueAt,

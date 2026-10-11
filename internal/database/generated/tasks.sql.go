@@ -131,6 +131,7 @@ INSERT INTO tasks (
     priority,
     assignee_user_id,
     created_by_user_id,
+    start_at,
     due_at,
     completed_at
 )
@@ -146,9 +147,10 @@ VALUES (
     $9,
     $10,
     $11,
-    $12
+    $12,
+    $13
 )
-RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
+RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
 `
 
 type CreateTaskParams struct {
@@ -162,6 +164,7 @@ type CreateTaskParams struct {
 	Priority        string
 	AssigneeUserID  pgtype.Text
 	CreatedByUserID string
+	StartAt         pgtype.Timestamptz
 	DueAt           pgtype.Timestamptz
 	CompletedAt     pgtype.Timestamptz
 }
@@ -178,6 +181,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		arg.Priority,
 		arg.AssigneeUserID,
 		arg.CreatedByUserID,
+		arg.StartAt,
 		arg.DueAt,
 		arg.CompletedAt,
 	)
@@ -198,6 +202,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.StartAt,
 	)
 	return i, err
 }
@@ -402,7 +407,7 @@ func (q *Queries) GetTaskAttachment(ctx context.Context, arg GetTaskAttachmentPa
 }
 
 const getTaskForProject = `-- name: GetTaskForProject :one
-SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
 FROM tasks
 WHERE
     tenant_id = $1
@@ -436,6 +441,7 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.StartAt,
 	)
 	return i, err
 }
@@ -574,7 +580,7 @@ func (q *Queries) ListTaskWatchers(ctx context.Context, arg ListTaskWatchersPara
 }
 
 const listTasksForProject = `-- name: ListTasksForProject :many
-SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
 FROM tasks
 WHERE
     tenant_id = $1
@@ -673,6 +679,7 @@ func (q *Queries) ListTasksForProject(ctx context.Context, arg ListTasksForProje
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.StartAt,
 		); err != nil {
 			return nil, err
 		}
@@ -809,15 +816,21 @@ const updateTask = `-- name: UpdateTask :one
             ELSE completed_at
         END,
 
+        start_at = CASE
+            WHEN $14::boolean
+            THEN $15::timestamptz
+            ELSE start_at
+        END,
+
         updated_at = NOW()
 
     WHERE
-        tenant_id = $14
-        AND project_id = $15
-        AND id = $16
+        tenant_id = $16
+        AND project_id = $17
+        AND id = $18
         AND archived_at IS NULL
 
-    RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at
+    RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
 `
 
 type UpdateTaskParams struct {
@@ -834,6 +847,8 @@ type UpdateTaskParams struct {
 	DueAt             pgtype.Timestamptz
 	UpdateCompletedAt bool
 	CompletedAt       pgtype.Timestamptz
+	UpdateStartAt     bool
+	StartAt           pgtype.Timestamptz
 	TenantID          string
 	ProjectID         pgtype.UUID
 	ID                pgtype.UUID
@@ -854,6 +869,8 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		arg.DueAt,
 		arg.UpdateCompletedAt,
 		arg.CompletedAt,
+		arg.UpdateStartAt,
+		arg.StartAt,
 		arg.TenantID,
 		arg.ProjectID,
 		arg.ID,
@@ -875,6 +892,7 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.StartAt,
 	)
 	return i, err
 }

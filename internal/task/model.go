@@ -28,12 +28,13 @@ type Task struct {
 
 	CreatedByUserID string
 
-	DueAt       *time.Time
+	StartAt *time.Time
+	DueAt   *time.Time
+
 	CompletedAt *time.Time
 
-	CreatedAt time.Time
-	UpdatedAt time.Time
-
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 	ArchivedAt *time.Time
 }
 

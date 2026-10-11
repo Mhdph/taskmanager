@@ -67,4 +67,8 @@ var (
 	ErrInvalidAttachment = errors.New(
 		"invalid attachment",
 	)
+
+	ErrInvalidTaskDateRange = errors.New(
+		"task start date cannot be after due date",
+	)
 )

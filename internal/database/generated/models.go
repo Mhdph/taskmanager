@@ -53,6 +53,7 @@ type Task struct {
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	ArchivedAt      pgtype.Timestamptz
+	StartAt         pgtype.Timestamptz
 }
 
 type TaskAttachment struct {

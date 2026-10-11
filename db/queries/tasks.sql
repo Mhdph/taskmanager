@@ -10,6 +10,7 @@ INSERT INTO tasks (
     priority,
     assignee_user_id,
     created_by_user_id,
+    start_at,
     due_at,
     completed_at
 )
@@ -24,6 +25,7 @@ VALUES (
     sqlc.arg(priority),
     sqlc.narg(assignee_user_id),
     sqlc.arg(created_by_user_id),
+    sqlc.narg(start_at),
     sqlc.narg(due_at),
     sqlc.narg(completed_at)
 )
@@ -135,6 +137,12 @@ WHERE
             WHEN sqlc.arg(update_completed_at)::boolean
             THEN sqlc.narg(completed_at)::timestamptz
             ELSE completed_at
+        END,
+
+        start_at = CASE
+            WHEN sqlc.arg(update_start_at)::boolean
+            THEN sqlc.narg(start_at)::timestamptz
+            ELSE start_at
         END,
 
         updated_at = NOW()
