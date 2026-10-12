@@ -446,6 +446,123 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 	return i, err
 }
 
+const listMyWorkTasks = `-- name: ListMyWorkTasks :many
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
+FROM tasks
+WHERE
+    tenant_id = $1
+    AND assignee_user_id = $2
+    AND archived_at IS NULL
+
+    AND (
+        $3::uuid IS NULL
+        OR status_id = $3::uuid
+    )
+
+    AND (
+        $4::varchar IS NULL
+        OR priority = $4::varchar
+    )
+
+    AND (
+        $5::timestamptz IS NULL
+        OR due_at >= $5::timestamptz
+    )
+
+    AND (
+        $6::timestamptz IS NULL
+        OR due_at <= $6::timestamptz
+    )
+
+    AND (
+        $7::boolean IS NULL
+        OR $7::boolean = false
+        OR (
+            due_at IS NOT NULL
+            AND due_at < NOW()
+            AND completed_at IS NULL
+        )
+    )
+
+    AND (
+        $8::timestamptz IS NULL
+        OR (
+            created_at,
+            id
+        ) < (
+            $8::timestamptz,
+            $9::uuid
+        )
+    )
+
+ORDER BY
+    created_at DESC,
+    id DESC
+
+LIMIT $10
+`
+
+type ListMyWorkTasksParams struct {
+	TenantID        string
+	UserID          pgtype.Text
+	StatusID        pgtype.UUID
+	Priority        pgtype.Text
+	DueFrom         pgtype.Timestamptz
+	DueTo           pgtype.Timestamptz
+	OverdueOnly     pgtype.Bool
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListMyWorkTasks(ctx context.Context, arg ListMyWorkTasksParams) ([]Task, error) {
+	rows, err := q.db.Query(ctx, listMyWorkTasks,
+		arg.TenantID,
+		arg.UserID,
+		arg.StatusID,
+		arg.Priority,
+		arg.DueFrom,
+		arg.DueTo,
+		arg.OverdueOnly,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ProjectID,
+			&i.StatusID,
+			&i.ParentTaskID,
+			&i.Title,
+			&i.Description,
+			&i.Priority,
+			&i.AssigneeUserID,
+			&i.CreatedByUserID,
+			&i.DueAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ArchivedAt,
+			&i.StartAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskAttachments = `-- name: ListTaskAttachments :many
 SELECT id, tenant_id, project_id, task_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
 FROM task_attachments
