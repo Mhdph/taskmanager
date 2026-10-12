@@ -1556,3 +1556,145 @@ func (r *Repository) DeleteAttachment(
 
 	return nil
 }
+
+func (r *Repository) ListMyWork(
+	ctx context.Context,
+	tenantID string,
+	userID string,
+	options MyWorkOptions,
+) ([]Task, error) {
+	var statusID pgtype.UUID
+
+	if options.StatusID != nil {
+		value, err := uuid.Parse(
+			*options.StatusID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"%w: invalid status id",
+				ErrInvalidID,
+			)
+		}
+
+		statusID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	var priority pgtype.Text
+
+	if options.Priority != nil {
+		priority = pgtype.Text{
+			String: string(
+				*options.Priority,
+			),
+			Valid: true,
+		}
+	}
+
+	var dueFrom pgtype.Timestamptz
+
+	if options.DueFrom != nil {
+		dueFrom = pgtype.Timestamptz{
+			Time:  *options.DueFrom,
+			Valid: true,
+		}
+	}
+
+	var dueTo pgtype.Timestamptz
+
+	if options.DueTo != nil {
+		dueTo = pgtype.Timestamptz{
+			Time:  *options.DueTo,
+			Valid: true,
+		}
+	}
+
+	var cursorCreatedAt pgtype.Timestamptz
+	var cursorID pgtype.UUID
+
+	if options.Cursor != nil {
+		cursorCreatedAt = pgtype.Timestamptz{
+			Time:  options.Cursor.CreatedAt,
+			Valid: true,
+		}
+
+		value, err := uuid.Parse(
+			options.Cursor.ID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"%w: invalid cursor id",
+				ErrInvalidID,
+			)
+		}
+
+		cursorID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	overdueOnly := pgtype.Bool{
+		Bool:  options.OverdueOnly,
+		Valid: true,
+	}
+
+	rows, err := r.queries.ListMyWorkTasks(
+		ctx,
+		db.ListMyWorkTasksParams{
+			TenantID:
+				tenantID,
+
+			UserID:
+				userID,
+
+			StatusID:
+				statusID,
+
+			Priority:
+				priority,
+
+			DueFrom:
+				dueFrom,
+
+			DueTo:
+				dueTo,
+
+			OverdueOnly:
+				overdueOnly,
+
+			CursorCreatedAt:
+				cursorCreatedAt,
+
+			CursorID:
+				cursorID,
+
+			PageLimit:
+				options.Limit,
+		},
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list my work tasks: %w",
+			err,
+		)
+	}
+
+	result := make(
+		[]Task,
+		0,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		result = append(
+			result,
+			taskFromDB(row),
+		)
+	}
+
+	return result, nil
+}

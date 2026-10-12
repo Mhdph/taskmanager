@@ -87,3 +87,25 @@ type Attachment struct {
 
 	CreatedAt time.Time
 }
+
+
+type MyWorkOptions struct {
+	Limit int32
+
+	Cursor *Cursor
+
+	StatusID *string
+
+	Priority *Priority
+
+	DueFrom *time.Time
+	DueTo   *time.Time
+
+	OverdueOnly bool
+}
+
+type MyWorkPage struct {
+	Items []Task
+
+	NextCursor *string
+}

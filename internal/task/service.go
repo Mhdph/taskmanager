@@ -1655,3 +1655,164 @@ func (s *Service) DeleteAttachment(
 
 	return nil
 }
+
+type MyWorkInput struct {
+	Identity auth.Identity
+
+	Limit  int
+	Cursor string
+
+	StatusID string
+	Priority string
+
+	DueFrom *time.Time
+	DueTo   *time.Time
+
+	OverdueOnly bool
+}
+
+func (s *Service) MyWork(
+	ctx context.Context,
+	input MyWorkInput,
+) (MyWorkPage, error) {
+	limit := input.Limit
+
+	if limit <= 0 {
+		limit = 20
+	}
+
+	if limit > 100 {
+		limit = 100
+	}
+
+	var cursor *Cursor
+
+	if input.Cursor != "" {
+		value, err := DecodeCursor(
+			input.Cursor,
+		)
+		if err != nil {
+			return MyWorkPage{}, fmt.Errorf(
+				"invalid cursor: %w",
+				err,
+			)
+		}
+
+		cursor = &value
+	}
+
+	var statusID *string
+
+	if input.StatusID != "" {
+		statusID = &input.StatusID
+	}
+
+	var priority *Priority
+
+	if input.Priority != "" {
+		value := Priority(
+			input.Priority,
+		)
+
+		switch value {
+		case PriorityLow,
+			PriorityMedium,
+			PriorityHigh,
+			PriorityUrgent:
+
+		default:
+			return MyWorkPage{},
+				ErrInvalidPriority
+		}
+
+		priority = &value
+	}
+
+	if input.DueFrom != nil &&
+		input.DueTo != nil &&
+		input.DueFrom.After(
+			*input.DueTo,
+		) {
+
+		return MyWorkPage{},
+			ErrInvalidTaskDateRange
+	}
+
+	items, err := s.repository.ListMyWork(
+		ctx,
+		input.Identity.TenantID,
+		input.Identity.UserID,
+		MyWorkOptions{
+			Limit:
+				int32(limit + 1),
+
+			Cursor:
+				cursor,
+
+			StatusID:
+				statusID,
+
+			Priority:
+				priority,
+
+			DueFrom:
+				input.DueFrom,
+
+			DueTo:
+				input.DueTo,
+
+			OverdueOnly:
+				input.OverdueOnly,
+		},
+	)
+
+	if err != nil {
+		return MyWorkPage{}, fmt.Errorf(
+			"list my work: %w",
+			err,
+		)
+	}
+
+	hasNext :=
+		len(items) > limit
+
+	if hasNext {
+		items =
+			items[:limit]
+	}
+
+	var nextCursor *string
+
+	if hasNext &&
+		len(items) > 0 {
+
+		last :=
+			items[len(items)-1]
+
+		value := EncodeCursor(
+			Cursor{
+				CreatedAt:
+					last.CreatedAt,
+
+				ID:
+					last.ID,
+			},
+		)
+
+		nextCursor = &value
+	}
+
+	return MyWorkPage{
+		Items:
+			items,
+
+		NextCursor:
+			nextCursor,
+	}, nil
+}
+
+type myWorkResponse struct {
+	Items []taskResponse `json:"items"`
+
+	NextCursor *string `json:"nextCursor"`
+}

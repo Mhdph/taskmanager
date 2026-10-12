@@ -249,6 +249,20 @@ func main() {
 				// ...
 			})
 
+			router.Route(
+				"/my-work",
+				func(r chi.Router) {
+					r.Use(
+						authMiddleware.Authenticate,
+					)
+
+					r.Get(
+						"/",
+						taskHandler.MyWork,
+					)
+				},
+			)
+
 			r.Route("/tasks", func(r chi.Router) {
 				r.Post("/", taskHandler.Create)
 				r.Get("/", taskHandler.List)

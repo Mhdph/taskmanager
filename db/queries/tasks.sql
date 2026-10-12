@@ -333,3 +333,57 @@ WHERE
     AND task_id = $3
     AND id = $4
     AND deleted_at IS NULL;
+-- name: ListMyWorkTasks :many
+SELECT *
+FROM tasks
+WHERE
+    tenant_id = sqlc.arg(tenant_id)
+    AND assignee_user_id = sqlc.arg(user_id)
+    AND archived_at IS NULL
+
+    AND (
+        sqlc.narg(status_id)::uuid IS NULL
+        OR status_id = sqlc.narg(status_id)::uuid
+    )
+
+    AND (
+        sqlc.narg(priority)::varchar IS NULL
+        OR priority = sqlc.narg(priority)::varchar
+    )
+
+    AND (
+        sqlc.narg(due_from)::timestamptz IS NULL
+        OR due_at >= sqlc.narg(due_from)::timestamptz
+    )
+
+    AND (
+        sqlc.narg(due_to)::timestamptz IS NULL
+        OR due_at <= sqlc.narg(due_to)::timestamptz
+    )
+
+    AND (
+        sqlc.narg(overdue_only)::boolean IS NULL
+        OR sqlc.narg(overdue_only)::boolean = false
+        OR (
+            due_at IS NOT NULL
+            AND due_at < NOW()
+            AND completed_at IS NULL
+        )
+    )
+
+    AND (
+        sqlc.narg(cursor_created_at)::timestamptz IS NULL
+        OR (
+            created_at,
+            id
+        ) < (
+            sqlc.narg(cursor_created_at)::timestamptz,
+            sqlc.narg(cursor_id)::uuid
+        )
+    )
+
+ORDER BY
+    created_at DESC,
+    id DESC
+
+LIMIT sqlc.arg(page_limit);

@@ -2118,3 +2118,214 @@ func (h *Handler) DeleteAttachment(
 		http.StatusNoContent,
 	)
 }
+
+
+func (h *Handler) MyWork(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok :=
+		auth.IdentityFromContext(
+			r.Context(),
+		)
+
+	if !ok {
+		http.Error(
+			w,
+			"identity not found",
+			http.StatusUnauthorized,
+		)
+		return
+	}
+
+	query :=
+		r.URL.Query()
+
+	limit := 20
+
+	if raw :=
+		query.Get("limit");
+		raw != "" {
+
+		value, err :=
+			strconv.Atoi(raw)
+
+		if err != nil {
+			http.Error(
+				w,
+				"invalid limit",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		limit = value
+	}
+
+	var dueFrom *time.Time
+
+	if raw :=
+		query.Get("dueFrom");
+		raw != "" {
+
+		value, err :=
+			time.Parse(
+				time.RFC3339,
+				raw,
+			)
+
+		if err != nil {
+			http.Error(
+				w,
+				"invalid dueFrom",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		dueFrom = &value
+	}
+
+	var dueTo *time.Time
+
+	if raw :=
+		query.Get("dueTo");
+		raw != "" {
+
+		value, err :=
+			time.Parse(
+				time.RFC3339,
+				raw,
+			)
+
+		if err != nil {
+			http.Error(
+				w,
+				"invalid dueTo",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		dueTo = &value
+	}
+
+	overdueOnly := false
+
+	if raw :=
+		query.Get("overdue");
+		raw != "" {
+
+		value, err :=
+			strconv.ParseBool(raw)
+
+		if err != nil {
+			http.Error(
+				w,
+				"invalid overdue",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		overdueOnly = value
+	}
+
+	page, err :=
+		h.service.MyWork(
+			r.Context(),
+			MyWorkInput{
+				Identity:
+					identity,
+
+				Limit:
+					limit,
+
+				Cursor:
+					query.Get("cursor"),
+
+				StatusID:
+					query.Get("statusId"),
+
+				Priority:
+					query.Get("priority"),
+
+				DueFrom:
+					dueFrom,
+
+				DueTo:
+					dueTo,
+
+				OverdueOnly:
+					overdueOnly,
+			},
+		)
+
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			ErrInvalidID,
+		),
+			errors.Is(
+				err,
+				ErrInvalidPriority,
+			),
+			errors.Is(
+				err,
+				ErrInvalidTaskDateRange,
+			):
+
+			http.Error(
+				w,
+				"invalid request",
+				http.StatusBadRequest,
+			)
+
+		default:
+			log.Printf(
+				"get my work: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"failed to get my work",
+				http.StatusInternalServerError,
+			)
+		}
+
+		return
+	}
+
+	items := make(
+		[]taskResponse,
+		0,
+		len(page.Items),
+	)
+
+	for _, item :=
+		range page.Items {
+
+		items = append(
+			items,
+			toTaskResponse(item),
+		)
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	_ = json.NewEncoder(w).
+		Encode(
+			myWorkResponse{
+				Items:
+					items,
+
+				NextCursor:
+					page.NextCursor,
+			},
+		)
+}
