@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -78,7 +79,7 @@ func (s *Service) Create(
 		return Project{}, ErrNameRequired
 	}
 
-	if len(name) > 200 {
+	if utf8.RuneCountInString(name) > 200 {
 		return Project{}, ErrNameTooLong
 	}
 
@@ -251,7 +252,7 @@ func (s *Service) Update(
 			return Project{}, ErrInvalidName
 		}
 
-		if len(value) > 200 {
+		if utf8.RuneCountInString(value) > 200 {
 			return Project{}, ErrInvalidName
 		}
 
@@ -610,7 +611,7 @@ func (s *Service) CreateStatus(
 
 	name := strings.TrimSpace(input.Name)
 
-	if name == "" || len(name) > 80 {
+	if name == "" || utf8.RuneCountInString(name) > 80 {
 		return ProjectStatus{}, ErrInvalidStatus
 	}
 
@@ -719,7 +720,7 @@ func (s *Service) UpdateStatus(
 	if input.Name != nil {
 		value := strings.TrimSpace(*input.Name)
 
-		if value == "" || len(value) > 80 {
+		if value == "" || utf8.RuneCountInString(value) > 80 {
 			return ProjectStatus{}, ErrInvalidStatus
 		}
 

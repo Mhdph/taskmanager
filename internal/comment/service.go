@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -99,7 +100,7 @@ func (s *Service) Create(
 	)
 
 	if body == "" ||
-		len(body) > 10000 {
+		utf8.RuneCountInString(body) > 10000 {
 
 		return Comment{},
 			ErrInvalidBody

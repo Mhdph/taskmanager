@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -117,7 +118,7 @@ func (s *Service) Create(
 	)
 
 	if title == "" ||
-		len(title) > 300 {
+		utf8.RuneCountInString(title) > 300 {
 
 		return Task{}, ErrInvalidTitle
 	}
@@ -607,7 +608,7 @@ func (s *Service) Update(
 		)
 
 		if value == "" ||
-			len(value) > 300 {
+			utf8.RuneCountInString(value) > 300 {
 			return Task{},
 				ErrInvalidTitle
 		}

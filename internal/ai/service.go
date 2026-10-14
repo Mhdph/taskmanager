@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/comment"
@@ -65,7 +66,7 @@ func (s *Service) TaskFromText(
 	)
 
 	if text == "" ||
-		len(text) > 20000 {
+		utf8.RuneCountInString(text) > 20000 {
 
 		return TaskDraft{},
 			ErrInvalidInput
