@@ -10,18 +10,22 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	db "github.com/mhdph/taskmanager/internal/database/generated"
 )
 
 type Repository struct {
+	db      *pgxpool.Pool
 	queries *db.Queries
 }
 
 func NewRepository(
+	pool *pgxpool.Pool,
 	queries *db.Queries,
 ) *Repository {
 	return &Repository{
+		db:      pool,
 		queries: queries,
 	}
 }
@@ -793,7 +797,32 @@ func (r *Repository) AddDependency(
 		)
 	}
 
-	row, err := r.queries.AddTaskDependency(
+	if taskUUID == dependsOnUUID {
+		return Dependency{}, ErrSelfDependency
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Dependency{}, fmt.Errorf("begin dependency transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := r.queries.WithTx(tx)
+	lockKey := tenantID + ":" + projectUUID.String()
+	if err := qtx.LockDependencyGraph(ctx, lockKey); err != nil {
+		return Dependency{}, fmt.Errorf("lock dependency graph: %w", err)
+	}
+	wouldCycle, err := qtx.TaskDependsTransitivelyOn(ctx, db.TaskDependsTransitivelyOnParams{
+		TenantID:     tenantID,
+		ProjectID:    pgtype.UUID{Bytes: projectUUID, Valid: true},
+		StartTaskID:  pgtype.UUID{Bytes: dependsOnUUID, Valid: true},
+		TargetTaskID: pgtype.UUID{Bytes: taskUUID, Valid: true},
+	})
+	if err != nil {
+		return Dependency{}, fmt.Errorf("check dependency graph in transaction: %w", err)
+	}
+	if wouldCycle {
+		return Dependency{}, ErrDependencyCycle
+	}
+	row, err := qtx.AddTaskDependency(
 		ctx,
 		db.AddTaskDependencyParams{
 			TenantID: tenantID,
@@ -828,6 +857,9 @@ func (r *Repository) AddDependency(
 			"add task dependency: %w",
 			err,
 		)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Dependency{}, fmt.Errorf("commit dependency transaction: %w", err)
 	}
 
 	return dependencyFromDB(row), nil
@@ -1644,37 +1676,28 @@ func (r *Repository) ListMyWork(
 	rows, err := r.queries.ListMyWorkTasks(
 		ctx,
 		db.ListMyWorkTasksParams{
-			TenantID:
-				tenantID,
+			TenantID: tenantID,
 
 			UserID: pgtype.Text{
 				String: userID,
 				Valid:  true,
 			},
 
-			StatusID:
-				statusID,
+			StatusID: statusID,
 
-			Priority:
-				priority,
+			Priority: priority,
 
-			DueFrom:
-				dueFrom,
+			DueFrom: dueFrom,
 
-			DueTo:
-				dueTo,
+			DueTo: dueTo,
 
-			OverdueOnly:
-				overdueOnly,
+			OverdueOnly: overdueOnly,
 
-			CursorCreatedAt:
-				cursorCreatedAt,
+			CursorCreatedAt: cursorCreatedAt,
 
-			CursorID:
-				cursorID,
+			CursorID: cursorID,
 
-			PageLimit:
-				options.Limit,
+			PageLimit: options.Limit,
 		},
 	)
 

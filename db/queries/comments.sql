@@ -58,9 +58,9 @@ LIMIT sqlc.arg(page_limit);
 
 
 -- name: ListTaskCommentMentions :many
-SELECT mentioned_user_id
+SELECT comment_id, mentioned_user_id
 FROM task_comment_mentions
-WHERE comment_id = $1
+WHERE comment_id = ANY(sqlc.arg(comment_ids)::uuid[])
 ORDER BY created_at ASC;
 
 

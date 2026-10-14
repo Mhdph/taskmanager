@@ -710,6 +710,26 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUs
 	return items, nil
 }
 
+const lockProjectForMembershipMutation = `-- name: LockProjectForMembershipMutation :one
+SELECT id
+FROM projects
+WHERE tenant_id = $1
+  AND id = $2
+FOR UPDATE
+`
+
+type LockProjectForMembershipMutationParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+}
+
+func (q *Queries) LockProjectForMembershipMutation(ctx context.Context, arg LockProjectForMembershipMutationParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockProjectForMembershipMutation, arg.TenantID, arg.ProjectID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects
     SET

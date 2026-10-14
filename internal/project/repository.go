@@ -730,7 +730,38 @@ func (r *Repository) UpdateMemberRole(
 		)
 	}
 
-	row, err := r.queries.UpdateProjectMemberRole(
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return ProjectMember{}, fmt.Errorf("begin member role transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := r.queries.WithTx(tx)
+	if err := lockProjectForMembershipMutation(ctx, qtx, tenantID, id); err != nil {
+		return ProjectMember{}, err
+	}
+	current, err := qtx.GetProjectMember(ctx, db.GetProjectMemberParams{
+		TenantID:  tenantID,
+		ProjectID: pgtype.UUID{Bytes: id, Valid: true},
+		UserID:    userID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectMember{}, ErrMemberNotFound
+		}
+		return ProjectMember{}, fmt.Errorf("get project member in transaction: %w", err)
+	}
+	if current.Role == string(MemberRoleManager) && role != MemberRoleManager {
+		count, err := qtx.CountProjectManagers(ctx, db.CountProjectManagersParams{
+			TenantID: tenantID, ProjectID: pgtype.UUID{Bytes: id, Valid: true},
+		})
+		if err != nil {
+			return ProjectMember{}, fmt.Errorf("count project managers in transaction: %w", err)
+		}
+		if count <= 1 {
+			return ProjectMember{}, ErrLastManager
+		}
+	}
+	row, err := qtx.UpdateProjectMemberRole(
 		ctx,
 		db.UpdateProjectMemberRoleParams{
 			TenantID: tenantID,
@@ -752,6 +783,9 @@ func (r *Repository) UpdateMemberRole(
 			err,
 		)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectMember{}, fmt.Errorf("commit member role transaction: %w", err)
+	}
 
 	return projectMemberFromDB(row), nil
 }
@@ -770,7 +804,36 @@ func (r *Repository) DeleteMember(
 		)
 	}
 
-	affected, err := r.queries.DeleteProjectMember(
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin member removal transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := r.queries.WithTx(tx)
+	if err := lockProjectForMembershipMutation(ctx, qtx, tenantID, id); err != nil {
+		return err
+	}
+	current, err := qtx.GetProjectMember(ctx, db.GetProjectMemberParams{
+		TenantID: tenantID, ProjectID: pgtype.UUID{Bytes: id, Valid: true}, UserID: userID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrMemberNotFound
+		}
+		return fmt.Errorf("get project member in transaction: %w", err)
+	}
+	if current.Role == string(MemberRoleManager) {
+		count, err := qtx.CountProjectManagers(ctx, db.CountProjectManagersParams{
+			TenantID: tenantID, ProjectID: pgtype.UUID{Bytes: id, Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("count project managers in transaction: %w", err)
+		}
+		if count <= 1 {
+			return ErrLastManager
+		}
+	}
+	affected, err := qtx.DeleteProjectMember(
 		ctx,
 		db.DeleteProjectMemberParams{
 			TenantID: tenantID,
@@ -791,7 +854,23 @@ func (r *Repository) DeleteMember(
 	if affected == 0 {
 		return ErrMemberNotFound
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit member removal transaction: %w", err)
+	}
 
+	return nil
+}
+
+func lockProjectForMembershipMutation(ctx context.Context, qtx *db.Queries, tenantID string, projectID uuid.UUID) error {
+	_, err := qtx.LockProjectForMembershipMutation(ctx, db.LockProjectForMembershipMutationParams{
+		TenantID: tenantID, ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock project for membership mutation: %w", err)
+	}
 	return nil
 }
 func (r *Repository) CountManagers(
@@ -1118,6 +1197,10 @@ func (r *Repository) DeleteStatus(
 		},
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return ErrStatusInUse
+		}
 		return fmt.Errorf(
 			"delete project status: %w",
 			err,
@@ -1128,6 +1211,75 @@ func (r *Repository) DeleteStatus(
 		return ErrStatusNotFound
 	}
 
+	return nil
+}
+
+func (r *Repository) ReorderStatuses(ctx context.Context, tenantID, projectID string, statusIDs []string) error {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidID, err)
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin status reorder: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var locked uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT id FROM projects WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, projectUUID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock project for status reorder: %w", err)
+	}
+	rows, err := tx.Query(ctx, `SELECT id FROM project_statuses WHERE tenant_id=$1 AND project_id=$2 ORDER BY position FOR UPDATE`, tenantID, projectUUID)
+	if err != nil {
+		return fmt.Errorf("lock project statuses: %w", err)
+	}
+	current := make(map[uuid.UUID]struct{})
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("read project statuses: %w", err)
+		}
+		current[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read project statuses: %w", err)
+	}
+	rows.Close()
+	if len(statusIDs) != len(current) {
+		return ErrInvalidStatusOrder
+	}
+	parsed := make([]uuid.UUID, 0, len(statusIDs))
+	seen := make(map[uuid.UUID]struct{}, len(statusIDs))
+	for _, value := range statusIDs {
+		id, err := uuid.Parse(value)
+		if err != nil {
+			return ErrInvalidStatusOrder
+		}
+		if _, ok := current[id]; !ok {
+			return ErrInvalidStatusOrder
+		}
+		if _, ok := seen[id]; ok {
+			return ErrInvalidStatusOrder
+		}
+		seen[id] = struct{}{}
+		parsed = append(parsed, id)
+	}
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS project_statuses_project_id_position_key DEFERRED`); err != nil {
+		return fmt.Errorf("defer status position constraint: %w", err)
+	}
+	for position, id := range parsed {
+		if _, err := tx.Exec(ctx, `UPDATE project_statuses SET position=$1 WHERE tenant_id=$2 AND project_id=$3 AND id=$4`, position, tenantID, projectUUID, id); err != nil {
+			return fmt.Errorf("update status position: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit status reorder: %w", err)
+	}
 	return nil
 }
 func (r *Repository) GetStatus(

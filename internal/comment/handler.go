@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/httpx"
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/task"
 )
@@ -100,14 +101,12 @@ func (h *Handler) Create(
 
 	var req createCommentRequest
 
-	if err := json.NewDecoder(
-		r.Body,
-	).Decode(&req); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}

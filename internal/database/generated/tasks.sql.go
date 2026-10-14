@@ -808,6 +808,15 @@ func (q *Queries) ListTasksForProject(ctx context.Context, arg ListTasksForProje
 	return items, nil
 }
 
+const lockDependencyGraph = `-- name: LockDependencyGraph :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+func (q *Queries) LockDependencyGraph(ctx context.Context, lockKey string) error {
+	_, err := q.db.Exec(ctx, lockDependencyGraph, lockKey)
+	return err
+}
+
 const taskDependsTransitivelyOn = `-- name: TaskDependsTransitivelyOn :one
 WITH RECURSIVE dependency_tree AS (
     SELECT

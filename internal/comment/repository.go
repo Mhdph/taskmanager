@@ -216,6 +216,7 @@ func (r *Repository) ListForTask(
 	}
 
 	result := make([]Comment, 0, len(rows))
+	commentIDs := make([]pgtype.UUID, 0, len(rows))
 	for _, row := range rows {
 		item := commentFromDB(row)
 		commentID, err := uuid.Parse(item.ID)
@@ -223,15 +224,27 @@ func (r *Repository) ListForTask(
 			return nil, fmt.Errorf("parse comment id: %w", err)
 		}
 
-		mentions, err := r.queries.ListTaskCommentMentions(
-			ctx,
-			pgtype.UUID{Bytes: commentID, Valid: true},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("list comment mentions: %w", err)
-		}
-		item.MentionedUserIDs = mentions
+		commentIDs = append(commentIDs, pgtype.UUID{Bytes: commentID, Valid: true})
 		result = append(result, item)
+	}
+	if len(commentIDs) == 0 {
+		return result, nil
+	}
+
+	mentionRows, err := r.queries.ListTaskCommentMentions(ctx, commentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list comment mentions: %w", err)
+	}
+	mentionsByComment := make(map[string][]string, len(result))
+	for _, row := range mentionRows {
+		commentID := uuid.UUID(row.CommentID.Bytes).String()
+		mentionsByComment[commentID] = append(mentionsByComment[commentID], row.MentionedUserID)
+	}
+	for i := range result {
+		result[i].MentionedUserIDs = mentionsByComment[result[i].ID]
+		if result[i].MentionedUserIDs == nil {
+			result[i].MentionedUserIDs = []string{}
+		}
 	}
 
 	return result, nil
@@ -389,10 +402,7 @@ func (r *Repository) Get(
 
 	item := commentFromDB(row)
 
-	mentions, err := r.queries.ListTaskCommentMentions(
-		ctx,
-		row.ID,
-	)
+	mentions, err := r.queries.ListTaskCommentMentions(ctx, []pgtype.UUID{row.ID})
 	if err != nil {
 		return Comment{}, fmt.Errorf(
 			"list comment mentions: %w",
@@ -400,7 +410,10 @@ func (r *Repository) Get(
 		)
 	}
 
-	item.MentionedUserIDs = mentions
+	item.MentionedUserIDs = make([]string, 0, len(mentions))
+	for _, mention := range mentions {
+		item.MentionedUserIDs = append(item.MentionedUserIDs, mention.MentionedUserID)
+	}
 
 	return item, nil
 }

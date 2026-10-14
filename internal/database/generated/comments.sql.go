@@ -160,25 +160,30 @@ func (q *Queries) GetTaskComment(ctx context.Context, arg GetTaskCommentParams) 
 }
 
 const listTaskCommentMentions = `-- name: ListTaskCommentMentions :many
-SELECT mentioned_user_id
+SELECT comment_id, mentioned_user_id
 FROM task_comment_mentions
-WHERE comment_id = $1
+WHERE comment_id = ANY($1::uuid[])
 ORDER BY created_at ASC
 `
 
-func (q *Queries) ListTaskCommentMentions(ctx context.Context, commentID pgtype.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, listTaskCommentMentions, commentID)
+type ListTaskCommentMentionsRow struct {
+	CommentID       pgtype.UUID
+	MentionedUserID string
+}
+
+func (q *Queries) ListTaskCommentMentions(ctx context.Context, commentIds []pgtype.UUID) ([]ListTaskCommentMentionsRow, error) {
+	rows, err := q.db.Query(ctx, listTaskCommentMentions, commentIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []ListTaskCommentMentionsRow
 	for rows.Next() {
-		var mentioned_user_id string
-		if err := rows.Scan(&mentioned_user_id); err != nil {
+		var i ListTaskCommentMentionsRow
+		if err := rows.Scan(&i.CommentID, &i.MentionedUserID); err != nil {
 			return nil, err
 		}
-		items = append(items, mentioned_user_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

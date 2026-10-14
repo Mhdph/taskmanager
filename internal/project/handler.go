@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/httpx"
 )
 
 type Handler struct {
@@ -73,12 +74,12 @@ func (h *Handler) Create(
 
 	var req createProjectRequest
 
-	err := json.NewDecoder(r.Body).Decode(&req)
+	err := httpx.DecodeJSON(w, r, &req)
 	if err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -351,11 +352,11 @@ func (h *Handler) Update(
 
 	var req updateProjectRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -554,13 +555,11 @@ func (h *Handler) AddMember(
 
 	var req addProjectMemberRequest
 
-	if err := json.NewDecoder(r.Body).Decode(
-		&req,
-	); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -697,13 +696,11 @@ func (h *Handler) UpdateMemberRole(
 
 	var req updateProjectMemberRequest
 
-	if err := json.NewDecoder(r.Body).Decode(
-		&req,
-	); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -873,6 +870,10 @@ type updateProjectStatusRequest struct {
 	Category *string `json:"category"`
 }
 
+type reorderProjectStatusesRequest struct {
+	StatusIDs []string `json:"statusIds"`
+}
+
 type projectStatusResponse struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -1010,13 +1011,11 @@ func (h *Handler) CreateStatus(
 
 	var req createProjectStatusRequest
 
-	if err := json.NewDecoder(r.Body).Decode(
-		&req,
-	); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -1128,13 +1127,11 @@ func (h *Handler) UpdateStatus(
 
 	var req updateProjectStatusRequest
 
-	if err := json.NewDecoder(r.Body).Decode(
-		&req,
-	); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -1179,6 +1176,9 @@ func (h *Handler) UpdateStatus(
 				"status not found",
 				http.StatusNotFound,
 			)
+
+		case errors.Is(err, ErrStatusInUse):
+			http.Error(w, "status is in use by tasks", http.StatusConflict)
 
 		case errors.Is(err, ErrStatusAlreadyExists),
 			errors.Is(err, ErrStatusPositionConflict):
@@ -1261,6 +1261,9 @@ func (h *Handler) DeleteStatus(
 	)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrStatusInUse):
+			http.Error(w, "status is in use by tasks", http.StatusConflict)
+
 		case errors.Is(err, ErrInvalidID):
 			http.Error(
 				w,
@@ -1301,4 +1304,33 @@ func (h *Handler) DeleteStatus(
 	w.WriteHeader(
 		http.StatusNoContent,
 	)
+}
+
+func (h *Handler) ReorderStatuses(w http.ResponseWriter, r *http.Request) {
+	identity, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		http.Error(w, "identity not found", http.StatusUnauthorized)
+		return
+	}
+	var req reorderProjectStatusesRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		http.Error(w, httpx.DecodeErrorMessage(err), httpx.DecodeErrorStatus(err))
+		return
+	}
+	err := h.service.ReorderStatuses(r.Context(), identity, chi.URLParam(r, "projectID"), req.StatusIDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidID), errors.Is(err, ErrInvalidStatusOrder):
+			http.Error(w, "invalid status ordering", http.StatusBadRequest)
+		case errors.Is(err, ErrNotFound):
+			http.Error(w, "project not found", http.StatusNotFound)
+		case errors.Is(err, ErrForbidden):
+			http.Error(w, "forbidden", http.StatusForbidden)
+		default:
+			log.Printf("reorder project statuses: %v", err)
+			http.Error(w, "failed to reorder statuses", http.StatusInternalServerError)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

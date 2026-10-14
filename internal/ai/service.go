@@ -24,6 +24,12 @@ type Service struct {
 	projectAuthorizer *project.Authorizer
 }
 
+const providerTimeout = 30 * time.Second
+
+func providerContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, providerTimeout)
+}
+
 func NewService(
 	client Client,
 	taskRepository *task.Repository,
@@ -65,9 +71,11 @@ func (s *Service) TaskFromText(
 			ErrInvalidInput
 	}
 
+	providerCtx, cancel := providerContext(ctx)
+	defer cancel()
 	result, err :=
 		s.client.TaskFromText(
-			ctx,
+			providerCtx,
 			text,
 		)
 
@@ -216,9 +224,11 @@ func (s *Service) SummarizeTask(
 		)
 	}
 
+	providerCtx, cancel := providerContext(ctx)
+	defer cancel()
 	result, err :=
 		s.client.SummarizeTask(
-			ctx,
+			providerCtx,
 			taskContext,
 		)
 
@@ -248,9 +258,11 @@ func (s *Service) SuggestTask(
 		)
 	}
 
+	providerCtx, cancel := providerContext(ctx)
+	defer cancel()
 	result, err :=
 		s.client.SuggestTask(
-			ctx,
+			providerCtx,
 			taskContext,
 		)
 
@@ -345,9 +357,11 @@ func (s *Service) SummarizeProject(
 		)
 	}
 
+	providerCtx, cancel := providerContext(ctx)
+	defer cancel()
 	result, err :=
 		s.client.SummarizeProject(
-			ctx,
+			providerCtx,
 			ProjectContext{
 				Name: projectItem.Name,
 

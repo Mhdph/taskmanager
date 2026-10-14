@@ -425,43 +425,6 @@ func (s *Service) UpdateMemberRole(
 		return ProjectMember{}, ErrInvalidMemberRole
 	}
 
-	currentRole, err := s.repository.GetMemberRole(
-		ctx,
-		input.Identity.TenantID,
-		input.ProjectID,
-		input.UserID,
-	)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ProjectMember{}, ErrMemberNotFound
-		}
-
-		return ProjectMember{}, fmt.Errorf(
-			"get current member role: %w",
-			err,
-		)
-	}
-
-	if currentRole == MemberRoleManager &&
-		input.Role != MemberRoleManager {
-
-		count, err := s.repository.CountManagers(
-			ctx,
-			input.Identity.TenantID,
-			input.ProjectID,
-		)
-		if err != nil {
-			return ProjectMember{}, fmt.Errorf(
-				"count project managers: %w",
-				err,
-			)
-		}
-
-		if count <= 1 {
-			return ProjectMember{}, ErrLastManager
-		}
-	}
-
 	member, err := s.repository.UpdateMemberRole(
 		ctx,
 		input.Identity.TenantID,
@@ -500,41 +463,6 @@ func (s *Service) RemoveMember(
 			"authorize member management: %w",
 			err,
 		)
-	}
-
-	role, err := s.repository.GetMemberRole(
-		ctx,
-		input.Identity.TenantID,
-		input.ProjectID,
-		input.UserID,
-	)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrMemberNotFound
-		}
-
-		return fmt.Errorf(
-			"get member role: %w",
-			err,
-		)
-	}
-
-	if role == MemberRoleManager {
-		count, err := s.repository.CountManagers(
-			ctx,
-			input.Identity.TenantID,
-			input.ProjectID,
-		)
-		if err != nil {
-			return fmt.Errorf(
-				"count project managers: %w",
-				err,
-			)
-		}
-
-		if count <= 1 {
-			return ErrLastManager
-		}
 	}
 
 	if err := s.repository.DeleteMember(
@@ -868,4 +796,11 @@ func (s *Service) DeleteStatus(
 	}
 
 	return nil
+}
+
+func (s *Service) ReorderStatuses(ctx context.Context, identity auth.Identity, projectID string, statusIDs []string) error {
+	if err := s.authorizer.Require(ctx, identity, projectID, PermissionManageStatuses); err != nil {
+		return fmt.Errorf("authorize status management: %w", err)
+	}
+	return s.repository.ReorderStatuses(ctx, identity.TenantID, projectID, statusIDs)
 }

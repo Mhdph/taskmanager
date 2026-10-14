@@ -164,6 +164,13 @@ WHERE
     tenant_id = $1
     AND project_id = $2
     AND user_id = $3;
+
+-- name: LockProjectForMembershipMutation :one
+SELECT id
+FROM projects
+WHERE tenant_id = sqlc.arg(tenant_id)
+  AND id = sqlc.arg(project_id)
+FOR UPDATE;
     -- name: UpdateProject :one
     UPDATE projects
     SET

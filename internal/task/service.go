@@ -40,6 +40,8 @@ type Service struct {
 	maxUploadSize int64
 }
 
+func (s *Service) UploadRequestLimit() int64 { return s.maxUploadSize + (1 << 20) }
+
 func NewService(
 	repository *Repository,
 	projectRepository *project.Repository,
@@ -163,12 +165,7 @@ func (s *Service) Create(
 		)
 	}
 
-	var completedAt *time.Time
-
-	if status.Category == project.StatusCategoryDone {
-		now := time.Now().UTC()
-		completedAt = &now
-	}
+	completedAt := completedAtForCreate(status.Category, time.Now().UTC())
 
 	// Verify assignee is a project member.
 	if input.AssigneeUserID != nil {
@@ -517,6 +514,29 @@ type UpdateInput struct {
 	DueAt       *time.Time
 }
 
+func completedAtForStatusChange(current *time.Time, statusChanged bool, category project.StatusCategory, now time.Time) (bool, *time.Time) {
+	if !statusChanged {
+		return false, nil
+	}
+	if category == project.StatusCategoryDone {
+		if current == nil {
+			return true, &now
+		}
+		return false, nil
+	}
+	if current != nil {
+		return true, nil
+	}
+	return false, nil
+}
+
+func completedAtForCreate(category project.StatusCategory, now time.Time) *time.Time {
+	if category == project.StatusCategoryDone {
+		return &now
+	}
+	return nil
+}
+
 func (s *Service) Update(
 	ctx context.Context,
 	input UpdateInput,
@@ -655,22 +675,12 @@ func (s *Service) Update(
 			previousStatus = &oldStatus
 		}
 
-		if statusChanged {
-			if status.Category ==
-				project.StatusCategoryDone {
-
-				if current.CompletedAt == nil {
-					now := time.Now().UTC()
-
-					updateCompletedAt = true
-					completedAt = &now
-				}
-
-			} else if current.CompletedAt != nil {
-				updateCompletedAt = true
-				completedAt = nil
-			}
-		}
+		updateCompletedAt, completedAt = completedAtForStatusChange(
+			current.CompletedAt,
+			statusChanged,
+			status.Category,
+			time.Now().UTC(),
+		)
 	}
 	if input.UpdateAssignee &&
 		input.AssigneeUserID != nil {
@@ -1830,17 +1840,6 @@ func (s *Service) DeleteAttachment(
 		return err
 	}
 
-	err = s.fileStorage.Delete(
-		ctx,
-		attachment.ObjectKey,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"delete attachment object: %w",
-			err,
-		)
-	}
-
 	err = s.repository.DeleteAttachment(
 		ctx,
 		identity.TenantID,
@@ -1854,6 +1853,9 @@ func (s *Service) DeleteAttachment(
 			"delete attachment metadata: %w",
 			err,
 		)
+	}
+	if err := s.fileStorage.Delete(ctx, attachment.ObjectKey); err != nil {
+		log.Printf("attachment storage cleanup failed attachment_id=%s: %v", attachment.ID, err)
 	}
 
 	s.recordAudit(ctx, audit.RecordInput{

@@ -21,4 +21,6 @@ var (
 	ErrStatusNotFound         = errors.New("project status not found")
 	ErrStatusAlreadyExists    = errors.New("project status already exists")
 	ErrStatusPositionConflict = errors.New("project status position conflict")
+	ErrStatusInUse            = errors.New("project status is used by tasks")
+	ErrInvalidStatusOrder     = errors.New("invalid project status ordering")
 )

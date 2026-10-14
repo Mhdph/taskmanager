@@ -182,6 +182,9 @@ VALUES (
     )
 RETURNING *;
 
+-- name: LockDependencyGraph :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(lock_key)::text, 0));
+
 
 -- name: DeleteTaskDependency :execrows
 DELETE FROM task_dependencies

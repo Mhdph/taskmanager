@@ -175,6 +175,7 @@ func main() {
 	// -------------------------------------------------------------------------
 
 	taskRepository := task.NewRepository(
+		pool,
 		queries,
 	)
 
@@ -332,11 +333,18 @@ func main() {
 			r.Delete("/", projectHandler.Archive)
 
 			r.Route("/members", func(r chi.Router) {
-				// ...
+				r.Get("/", projectHandler.ListMembers)
+				r.Post("/", projectHandler.AddMember)
+				r.Patch("/{userID}", projectHandler.UpdateMemberRole)
+				r.Delete("/{userID}", projectHandler.RemoveMember)
 			})
 
 			r.Route("/statuses", func(r chi.Router) {
-				// ...
+				r.Get("/", projectHandler.ListStatuses)
+				r.Post("/", projectHandler.CreateStatus)
+				r.Put("/reorder", projectHandler.ReorderStatuses)
+				r.Patch("/{statusID}", projectHandler.UpdateStatus)
+				r.Delete("/{statusID}", projectHandler.DeleteStatus)
 			})
 
 			router.Route(
@@ -448,11 +456,12 @@ func main() {
 	// -------------------------------------------------------------------------
 
 	server := &http.Server{
-		Addr:         cfg.Server.Address(),
-		Handler:      router,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              cfg.Server.Address(),
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// -------------------------------------------------------------------------

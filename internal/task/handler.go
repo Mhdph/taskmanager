@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/httpx"
 	"github.com/mhdph/taskmanager/internal/project"
 )
 
@@ -110,13 +111,11 @@ func (h *Handler) Create(
 
 	var req createTaskRequest
 
-	if err := json.NewDecoder(r.Body).Decode(
-		&req,
-	); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -497,13 +496,11 @@ func (h *Handler) Update(
 
 	var req updateTaskRequest
 
-	if err := json.NewDecoder(r.Body).Decode(
-		&req,
-	); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -932,13 +929,12 @@ func (h *Handler) AddDependency(
 
 	var req addTaskDependencyRequest
 
-	if err := json.NewDecoder(r.Body).
-		Decode(&req); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -1304,14 +1300,12 @@ func (h *Handler) AddWatcher(
 
 	var req addTaskWatcherRequest
 
-	if err := json.NewDecoder(
-		r.Body,
-	).Decode(&req); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 
 		http.Error(
 			w,
-			"invalid request body",
-			http.StatusBadRequest,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
 		)
 		return
 	}
@@ -1696,9 +1690,15 @@ func (h *Handler) UploadAttachment(
 		"taskID",
 	)
 
+	r.Body = http.MaxBytesReader(w, r.Body, h.service.UploadRequestLimit())
 	if err := r.ParseMultipartForm(
 		32 << 20,
 	); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 
 		http.Error(
 			w,
@@ -2119,7 +2119,6 @@ func (h *Handler) DeleteAttachment(
 	)
 }
 
-
 func (h *Handler) MyWork(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2144,8 +2143,7 @@ func (h *Handler) MyWork(
 	limit := 20
 
 	if raw :=
-		query.Get("limit");
-		raw != "" {
+		query.Get("limit"); raw != "" {
 
 		value, err :=
 			strconv.Atoi(raw)
@@ -2165,8 +2163,7 @@ func (h *Handler) MyWork(
 	var dueFrom *time.Time
 
 	if raw :=
-		query.Get("dueFrom");
-		raw != "" {
+		query.Get("dueFrom"); raw != "" {
 
 		value, err :=
 			time.Parse(
@@ -2189,8 +2186,7 @@ func (h *Handler) MyWork(
 	var dueTo *time.Time
 
 	if raw :=
-		query.Get("dueTo");
-		raw != "" {
+		query.Get("dueTo"); raw != "" {
 
 		value, err :=
 			time.Parse(
@@ -2213,8 +2209,7 @@ func (h *Handler) MyWork(
 	overdueOnly := false
 
 	if raw :=
-		query.Get("overdue");
-		raw != "" {
+		query.Get("overdue"); raw != "" {
 
 		value, err :=
 			strconv.ParseBool(raw)
@@ -2235,29 +2230,21 @@ func (h *Handler) MyWork(
 		h.service.MyWork(
 			r.Context(),
 			MyWorkInput{
-				Identity:
-					identity,
+				Identity: identity,
 
-				Limit:
-					limit,
+				Limit: limit,
 
-				Cursor:
-					query.Get("cursor"),
+				Cursor: query.Get("cursor"),
 
-				StatusID:
-					query.Get("statusId"),
+				StatusID: query.Get("statusId"),
 
-				Priority:
-					query.Get("priority"),
+				Priority: query.Get("priority"),
 
-				DueFrom:
-					dueFrom,
+				DueFrom: dueFrom,
 
-				DueTo:
-					dueTo,
+				DueTo: dueTo,
 
-				OverdueOnly:
-					overdueOnly,
+				OverdueOnly: overdueOnly,
 			},
 		)
 
@@ -2304,8 +2291,7 @@ func (h *Handler) MyWork(
 		len(page.Items),
 	)
 
-	for _, item :=
-		range page.Items {
+	for _, item := range page.Items {
 
 		items = append(
 			items,
@@ -2321,11 +2307,9 @@ func (h *Handler) MyWork(
 	_ = json.NewEncoder(w).
 		Encode(
 			myWorkResponse{
-				Items:
-					items,
+				Items: items,
 
-				NextCursor:
-					page.NextCursor,
+				NextCursor: page.NextCursor,
 			},
 		)
 }
