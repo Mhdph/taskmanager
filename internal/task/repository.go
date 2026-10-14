@@ -1647,8 +1647,10 @@ func (r *Repository) ListMyWork(
 			TenantID:
 				tenantID,
 
-			UserID:
-				userID,
+			UserID: pgtype.Text{
+				String: userID,
+				Valid:  true,
+			},
 
 			StatusID:
 				statusID,

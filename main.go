@@ -21,6 +21,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/hosted"
 	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
+	"github.com/mhdph/taskmanager/internal/search"
 	"github.com/mhdph/taskmanager/internal/storage"
 	"github.com/mhdph/taskmanager/internal/task"
 )
@@ -212,6 +213,24 @@ func main() {
 		)
 
 	// -------------------------------------------------------------------------
+	// Search module
+	// -------------------------------------------------------------------------
+	searchRepository :=
+		search.NewRepository(
+			queries,
+		)
+
+	searchService :=
+		search.NewService(
+			searchRepository,
+		)
+
+	searchHandler :=
+		search.NewHandler(
+			searchService,
+		)
+
+	// -------------------------------------------------------------------------
 	// Router
 	// -------------------------------------------------------------------------
 
@@ -259,6 +278,20 @@ func main() {
 					r.Get(
 						"/",
 						taskHandler.MyWork,
+					)
+				},
+			)
+
+			router.Route(
+				"/search",
+				func(r chi.Router) {
+					r.Use(
+						authMiddleware.Authenticate,
+					)
+
+					r.Get(
+						"/",
+						searchHandler.Search,
 					)
 				},
 			)
