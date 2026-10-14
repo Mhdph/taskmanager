@@ -837,6 +837,15 @@ func (q *Queries) LockDependencyGraph(ctx context.Context, lockKey string) error
 	return err
 }
 
+const lockTaskHierarchy = `-- name: LockTaskHierarchy :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+func (q *Queries) LockTaskHierarchy(ctx context.Context, lockKey string) error {
+	_, err := q.db.Exec(ctx, lockTaskHierarchy, lockKey)
+	return err
+}
+
 const taskDependsTransitivelyOn = `-- name: TaskDependsTransitivelyOn :one
 WITH RECURSIVE dependency_tree AS (
     SELECT
@@ -881,6 +890,47 @@ func (q *Queries) TaskDependsTransitivelyOn(ctx context.Context, arg TaskDepends
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const taskParentWouldCycle = `-- name: TaskParentWouldCycle :one
+WITH RECURSIVE ancestors AS (
+    SELECT t.id AS ancestor_id
+    FROM tasks t
+    WHERE t.tenant_id = $2
+      AND t.project_id = $3
+      AND t.id = $4
+
+    UNION
+
+    SELECT t.parent_task_id AS ancestor_id
+    FROM tasks t
+    JOIN ancestors a ON t.id = a.ancestor_id
+    WHERE t.tenant_id = $2
+      AND t.project_id = $3
+      AND t.parent_task_id IS NOT NULL
+)
+SELECT ($1::uuid IN (
+    SELECT ancestor_id FROM ancestors
+))::boolean AS would_cycle
+`
+
+type TaskParentWouldCycleParams struct {
+	TaskID       pgtype.UUID
+	TenantID     string
+	ProjectID    pgtype.UUID
+	ParentTaskID pgtype.UUID
+}
+
+func (q *Queries) TaskParentWouldCycle(ctx context.Context, arg TaskParentWouldCycleParams) (bool, error) {
+	row := q.db.QueryRow(ctx, taskParentWouldCycle,
+		arg.TaskID,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.ParentTaskID,
+	)
+	var would_cycle bool
+	err := row.Scan(&would_cycle)
+	return would_cycle, err
 }
 
 const taskWatcherExists = `-- name: TaskWatcherExists :one

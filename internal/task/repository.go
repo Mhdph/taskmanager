@@ -629,7 +629,50 @@ func (r *Repository) Update(
 		}
 	}
 
-	row, err := r.queries.UpdateTask(
+	queries := r.queries
+	var parentTx pgx.Tx
+	if params.UpdateParentTask {
+		parentTx, err = r.db.Begin(ctx)
+		if err != nil {
+			return Task{}, fmt.Errorf("begin task parent transaction: %w", err)
+		}
+		defer parentTx.Rollback(ctx)
+		queries = r.queries.WithTx(parentTx)
+		lockKey := "task-parent:" + params.TenantID + ":" + projectID.String()
+		if err := queries.LockTaskHierarchy(ctx, lockKey); err != nil {
+			return Task{}, fmt.Errorf("lock task hierarchy: %w", err)
+		}
+		if parentTaskID.Valid {
+			if parentTaskID.Bytes == taskID {
+				return Task{}, ErrInvalidParentTask
+			}
+			_, err := queries.GetTaskForProject(ctx, db.GetTaskForProjectParams{
+				TenantID:  params.TenantID,
+				ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+				ID:        parentTaskID,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Task{}, ErrParentTaskNotFound
+			}
+			if err != nil {
+				return Task{}, fmt.Errorf("validate task parent: %w", err)
+			}
+			wouldCycle, err := queries.TaskParentWouldCycle(ctx, db.TaskParentWouldCycleParams{
+				TenantID:     params.TenantID,
+				ProjectID:    pgtype.UUID{Bytes: projectID, Valid: true},
+				ParentTaskID: parentTaskID,
+				TaskID:       pgtype.UUID{Bytes: taskID, Valid: true},
+			})
+			if err != nil {
+				return Task{}, fmt.Errorf("check task parent cycle: %w", err)
+			}
+			if wouldCycle {
+				return Task{}, ErrInvalidParentTask
+			}
+		}
+	}
+
+	row, err := queries.UpdateTask(
 		ctx,
 		db.UpdateTaskParams{
 			Title: title,
@@ -684,6 +727,11 @@ func (r *Repository) Update(
 		)
 	}
 
+	if parentTx != nil {
+		if err := parentTx.Commit(ctx); err != nil {
+			return Task{}, fmt.Errorf("commit task parent transaction: %w", err)
+		}
+	}
 	return taskFromDB(row), nil
 }
 func (r *Repository) Archive(

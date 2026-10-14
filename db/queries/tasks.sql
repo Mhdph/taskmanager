@@ -155,6 +155,30 @@ WHERE
 
     RETURNING *;
 
+-- name: LockTaskHierarchy :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(lock_key)::text, 0));
+
+-- name: TaskParentWouldCycle :one
+WITH RECURSIVE ancestors AS (
+    SELECT t.id AS ancestor_id
+    FROM tasks t
+    WHERE t.tenant_id = sqlc.arg(tenant_id)
+      AND t.project_id = sqlc.arg(project_id)
+      AND t.id = sqlc.arg(parent_task_id)
+
+    UNION
+
+    SELECT t.parent_task_id AS ancestor_id
+    FROM tasks t
+    JOIN ancestors a ON t.id = a.ancestor_id
+    WHERE t.tenant_id = sqlc.arg(tenant_id)
+      AND t.project_id = sqlc.arg(project_id)
+      AND t.parent_task_id IS NOT NULL
+)
+SELECT (sqlc.arg(task_id)::uuid IN (
+    SELECT * FROM ancestors
+))::boolean AS would_cycle;
+
 -- name: ArchiveTask :execrows
 UPDATE tasks
 SET
