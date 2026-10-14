@@ -11,11 +11,19 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mhdph/taskmanager/internal/audit"
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/storage"
 )
+
+type AuditRecorder interface {
+	Record(
+		ctx context.Context,
+		input audit.RecordInput,
+	) error
+}
 
 type Service struct {
 	repository *Repository
@@ -27,6 +35,8 @@ type Service struct {
 
 	fileStorage FileStorage
 
+	auditRecorder AuditRecorder
+
 	maxUploadSize int64
 }
 
@@ -36,6 +46,7 @@ func NewService(
 	projectAuthorizer *project.Authorizer,
 	notificationSender NotificationSender,
 	fileStorage FileStorage,
+	auditRecorder AuditRecorder,
 	maxUploadSize int64,
 ) *Service {
 	return &Service{
@@ -48,6 +59,8 @@ func NewService(
 		notificationSender: notificationSender,
 
 		fileStorage: fileStorage,
+
+		auditRecorder: auditRecorder,
 
 		maxUploadSize: maxUploadSize,
 	}
@@ -236,6 +249,38 @@ func (s *Service) Create(
 			"create task: %w",
 			err,
 		)
+	}
+
+	projectID := task.ProjectID
+	taskID := task.ID
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    input.Identity.TenantID,
+		ActorUserID: input.Identity.UserID,
+		Action:      audit.ActionTaskCreated,
+		EntityType:  audit.EntityTask,
+		EntityID:    taskID,
+		ProjectID:   auditID(projectID),
+		TaskID:      auditID(taskID),
+		Metadata: map[string]any{
+			"status_id":        task.StatusID,
+			"priority":         task.Priority,
+			"assignee_user_id": task.AssigneeUserID,
+			"parent_task_id":   task.ParentTaskID,
+		},
+	})
+	if task.AssigneeUserID != nil {
+		s.recordAudit(ctx, audit.RecordInput{
+			TenantID:    input.Identity.TenantID,
+			ActorUserID: input.Identity.UserID,
+			Action:      audit.ActionTaskAssigned,
+			EntityType:  audit.EntityTask,
+			EntityID:    taskID,
+			ProjectID:   auditID(projectID),
+			TaskID:      auditID(taskID),
+			Metadata: map[string]any{
+				"assignee_user_id": task.AssigneeUserID,
+			},
+		})
 	}
 
 	if task.AssigneeUserID != nil {
@@ -691,6 +736,87 @@ func (s *Service) Update(
 		)
 	}
 
+	changedFields := make([]string, 0, 10)
+	if title != nil {
+		changedFields = append(changedFields, "title")
+	}
+	if input.UpdateDescription {
+		changedFields = append(changedFields, "description")
+	}
+	if statusChanged {
+		changedFields = append(changedFields, "status_id")
+	}
+	if input.Priority != nil {
+		changedFields = append(changedFields, "priority")
+	}
+	if assigneeChanged {
+		changedFields = append(changedFields, "assignee_user_id")
+	}
+	if input.UpdateParentTask {
+		changedFields = append(changedFields, "parent_task_id")
+	}
+	if input.UpdateStartAt {
+		changedFields = append(changedFields, "start_at")
+	}
+	if input.UpdateDueAt {
+		changedFields = append(changedFields, "due_at")
+	}
+
+	if len(changedFields) > 0 {
+		projectID := updated.ProjectID
+		taskID := updated.ID
+		s.recordAudit(ctx, audit.RecordInput{
+			TenantID:    input.Identity.TenantID,
+			ActorUserID: input.Identity.UserID,
+			Action:      audit.ActionTaskUpdated,
+			EntityType:  audit.EntityTask,
+			EntityID:    taskID,
+			ProjectID:   auditID(projectID),
+			TaskID:      auditID(taskID),
+			Metadata: map[string]any{
+				"changed_fields": changedFields,
+			},
+		})
+	}
+
+	if statusChanged && previousStatus != nil && nextStatus != nil {
+		projectID := updated.ProjectID
+		taskID := updated.ID
+		s.recordAudit(ctx, audit.RecordInput{
+			TenantID:    input.Identity.TenantID,
+			ActorUserID: input.Identity.UserID,
+			Action:      audit.ActionTaskStatusChanged,
+			EntityType:  audit.EntityTask,
+			EntityID:    taskID,
+			ProjectID:   auditID(projectID),
+			TaskID:      auditID(taskID),
+			Metadata: map[string]any{
+				"from_status_id":   previousStatus.ID,
+				"from_status_name": previousStatus.Name,
+				"to_status_id":     nextStatus.ID,
+				"to_status_name":   nextStatus.Name,
+			},
+		})
+	}
+
+	if assigneeChanged {
+		projectID := updated.ProjectID
+		taskID := updated.ID
+		s.recordAudit(ctx, audit.RecordInput{
+			TenantID:    input.Identity.TenantID,
+			ActorUserID: input.Identity.UserID,
+			Action:      audit.ActionTaskAssigned,
+			EntityType:  audit.EntityTask,
+			EntityID:    taskID,
+			ProjectID:   auditID(projectID),
+			TaskID:      auditID(taskID),
+			Metadata: map[string]any{
+				"from_assignee_user_id": current.AssigneeUserID,
+				"to_assignee_user_id":   updated.AssigneeUserID,
+			},
+		})
+	}
+
 	if assigneeChanged {
 		s.sendAssignedNotification(
 			ctx,
@@ -745,6 +871,16 @@ func (s *Service) Archive(
 			err,
 		)
 	}
+
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    identity.TenantID,
+		ActorUserID: identity.UserID,
+		Action:      audit.ActionTaskArchived,
+		EntityType:  audit.EntityTask,
+		EntityID:    taskID,
+		ProjectID:   auditID(projectID),
+		TaskID:      auditID(taskID),
+	})
 
 	return nil
 }
@@ -843,6 +979,19 @@ func (s *Service) AddDependency(
 		)
 	}
 
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    input.Identity.TenantID,
+		ActorUserID: input.Identity.UserID,
+		Action:      audit.ActionDependencyAdded,
+		EntityType:  audit.EntityDependency,
+		EntityID:    input.TaskID,
+		ProjectID:   auditID(input.ProjectID),
+		TaskID:      auditID(input.TaskID),
+		Metadata: map[string]any{
+			"depends_on_task_id": input.DependsOnTaskID,
+		},
+	})
+
 	return dependency, nil
 }
 
@@ -932,6 +1081,19 @@ func (s *Service) RemoveDependency(
 			err,
 		)
 	}
+
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    input.Identity.TenantID,
+		ActorUserID: input.Identity.UserID,
+		Action:      audit.ActionDependencyRemoved,
+		EntityType:  audit.EntityDependency,
+		EntityID:    input.TaskID,
+		ProjectID:   auditID(input.ProjectID),
+		TaskID:      auditID(input.TaskID),
+		Metadata: map[string]any{
+			"depends_on_task_id": input.DependsOnTaskID,
+		},
+	})
 
 	return nil
 }
@@ -1217,6 +1379,19 @@ func (s *Service) AddWatcher(
 		)
 	}
 
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    input.Identity.TenantID,
+		ActorUserID: input.Identity.UserID,
+		Action:      audit.ActionTaskWatcherAdded,
+		EntityType:  audit.EntityTask,
+		EntityID:    input.TaskID,
+		ProjectID:   auditID(input.ProjectID),
+		TaskID:      auditID(input.TaskID),
+		Metadata: map[string]any{
+			"watcher_user_id": watcher.UserID,
+		},
+	})
+
 	return watcher, nil
 }
 
@@ -1309,6 +1484,19 @@ func (s *Service) RemoveWatcher(
 			err,
 		)
 	}
+
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    input.Identity.TenantID,
+		ActorUserID: input.Identity.UserID,
+		Action:      audit.ActionTaskWatcherRemoved,
+		EntityType:  audit.EntityTask,
+		EntityID:    input.TaskID,
+		ProjectID:   auditID(input.ProjectID),
+		TaskID:      auditID(input.TaskID),
+		Metadata: map[string]any{
+			"watcher_user_id": input.UserID,
+		},
+	})
 
 	return nil
 }
@@ -1483,6 +1671,21 @@ func (s *Service) UploadAttachment(
 		)
 	}
 
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    input.Identity.TenantID,
+		ActorUserID: input.Identity.UserID,
+		Action:      audit.ActionAttachmentUploaded,
+		EntityType:  audit.EntityAttachment,
+		EntityID:    attachment.ID,
+		ProjectID:   auditID(input.ProjectID),
+		TaskID:      auditID(input.TaskID),
+		Metadata: map[string]any{
+			"filename":     attachment.Filename,
+			"content_type": attachment.ContentType,
+			"size_bytes":   attachment.SizeBytes,
+		},
+	})
+
 	return attachment, nil
 }
 func (s *Service) ListAttachments(
@@ -1653,6 +1856,19 @@ func (s *Service) DeleteAttachment(
 		)
 	}
 
+	s.recordAudit(ctx, audit.RecordInput{
+		TenantID:    identity.TenantID,
+		ActorUserID: identity.UserID,
+		Action:      audit.ActionAttachmentDeleted,
+		EntityType:  audit.EntityAttachment,
+		EntityID:    attachment.ID,
+		ProjectID:   auditID(projectID),
+		TaskID:      auditID(taskID),
+		Metadata: map[string]any{
+			"filename": attachment.Filename,
+		},
+	})
+
 	return nil
 }
 
@@ -1743,26 +1959,19 @@ func (s *Service) MyWork(
 		input.Identity.TenantID,
 		input.Identity.UserID,
 		MyWorkOptions{
-			Limit:
-				int32(limit + 1),
+			Limit: int32(limit + 1),
 
-			Cursor:
-				cursor,
+			Cursor: cursor,
 
-			StatusID:
-				statusID,
+			StatusID: statusID,
 
-			Priority:
-				priority,
+			Priority: priority,
 
-			DueFrom:
-				input.DueFrom,
+			DueFrom: input.DueFrom,
 
-			DueTo:
-				input.DueTo,
+			DueTo: input.DueTo,
 
-			OverdueOnly:
-				input.OverdueOnly,
+			OverdueOnly: input.OverdueOnly,
 		},
 	)
 
@@ -1791,11 +2000,9 @@ func (s *Service) MyWork(
 
 		value := EncodeCursor(
 			Cursor{
-				CreatedAt:
-					last.CreatedAt,
+				CreatedAt: last.CreatedAt,
 
-				ID:
-					last.ID,
+				ID: last.ID,
 			},
 		)
 
@@ -1803,11 +2010,9 @@ func (s *Service) MyWork(
 	}
 
 	return MyWorkPage{
-		Items:
-			items,
+		Items: items,
 
-		NextCursor:
-			nextCursor,
+		NextCursor: nextCursor,
 	}, nil
 }
 

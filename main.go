@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mhdph/taskmanager/internal/ai"
+	"github.com/mhdph/taskmanager/internal/audit"
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/comment"
 	"github.com/mhdph/taskmanager/internal/config"
@@ -177,12 +178,18 @@ func main() {
 		queries,
 	)
 
+	auditRepository :=
+		audit.NewRepository(
+			queries,
+		)
+
 	taskService := task.NewService(
 		taskRepository,
 		projectRepository,
 		projectAuthorizer,
 		notificationClient,
 		storageClient,
+		auditRepository,
 		cfg.Storage.MaxUploadSize,
 	)
 
