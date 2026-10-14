@@ -374,6 +374,11 @@ func main() {
 					r.Get("/", taskHandler.Get)
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
+					r.Route("/watchers", func(r chi.Router) {
+						r.Get("/", taskHandler.ListWatchers)
+						r.Post("/", taskHandler.AddWatcher)
+						r.Delete("/{userID}", taskHandler.RemoveWatcher)
+					})
 					r.Route("/ai", func(r chi.Router) {
 						r.Post("/summary", aiHandler.SummarizeTask)
 						r.Post("/suggestions", aiHandler.SuggestTask)
