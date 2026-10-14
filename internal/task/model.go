@@ -88,8 +88,9 @@ type Attachment struct {
 	CreatedAt time.Time
 }
 
-
 type MyWorkOptions struct {
+	IsAdmin bool
+
 	Limit int32
 
 	Cursor *Cursor

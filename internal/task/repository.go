@@ -1676,6 +1676,8 @@ func (r *Repository) ListMyWork(
 	rows, err := r.queries.ListMyWorkTasks(
 		ctx,
 		db.ListMyWorkTasksParams{
+			IsAdmin: options.IsAdmin,
+
 			TenantID: tenantID,
 
 			UserID: pgtype.Text{

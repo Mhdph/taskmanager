@@ -447,36 +447,54 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 }
 
 const listMyWorkTasks = `-- name: ListMyWorkTasks :many
-SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
-FROM tasks
+SELECT t.id, t.tenant_id, t.project_id, t.status_id, t.parent_task_id, t.title, t.description, t.priority, t.assignee_user_id, t.created_by_user_id, t.due_at, t.completed_at, t.created_at, t.updated_at, t.archived_at, t.start_at
+FROM tasks t
 WHERE
-    tenant_id = $1
-    AND assignee_user_id = $2
-    AND archived_at IS NULL
+    t.tenant_id = $1
+    AND t.assignee_user_id = $2
+    AND t.archived_at IS NULL
 
-    AND (
-        $3::uuid IS NULL
-        OR status_id = $3::uuid
+    AND EXISTS (
+        SELECT 1
+        FROM projects p
+        WHERE p.tenant_id = t.tenant_id
+          AND p.id = t.project_id
+          AND p.archived_at IS NULL
+          AND (
+              $3::boolean = true
+              OR EXISTS (
+                  SELECT 1
+                  FROM project_members pm
+                  WHERE pm.tenant_id = p.tenant_id
+                    AND pm.project_id = p.id
+                    AND pm.user_id = $2
+              )
+          )
     )
 
     AND (
-        $4::varchar IS NULL
-        OR priority = $4::varchar
+        $4::uuid IS NULL
+        OR status_id = $4::uuid
     )
 
     AND (
-        $5::timestamptz IS NULL
-        OR due_at >= $5::timestamptz
+        $5::varchar IS NULL
+        OR priority = $5::varchar
     )
 
     AND (
         $6::timestamptz IS NULL
-        OR due_at <= $6::timestamptz
+        OR due_at >= $6::timestamptz
     )
 
     AND (
-        $7::boolean IS NULL
-        OR $7::boolean = false
+        $7::timestamptz IS NULL
+        OR due_at <= $7::timestamptz
+    )
+
+    AND (
+        $8::boolean IS NULL
+        OR $8::boolean = false
         OR (
             due_at IS NOT NULL
             AND due_at < NOW()
@@ -485,13 +503,13 @@ WHERE
     )
 
     AND (
-        $8::timestamptz IS NULL
+        $9::timestamptz IS NULL
         OR (
             created_at,
             id
         ) < (
-            $8::timestamptz,
-            $9::uuid
+            $9::timestamptz,
+            $10::uuid
         )
     )
 
@@ -499,12 +517,13 @@ ORDER BY
     created_at DESC,
     id DESC
 
-LIMIT $10
+LIMIT $11
 `
 
 type ListMyWorkTasksParams struct {
 	TenantID        string
 	UserID          pgtype.Text
+	IsAdmin         bool
 	StatusID        pgtype.UUID
 	Priority        pgtype.Text
 	DueFrom         pgtype.Timestamptz
@@ -519,6 +538,7 @@ func (q *Queries) ListMyWorkTasks(ctx context.Context, arg ListMyWorkTasksParams
 	rows, err := q.db.Query(ctx, listMyWorkTasks,
 		arg.TenantID,
 		arg.UserID,
+		arg.IsAdmin,
 		arg.StatusID,
 		arg.Priority,
 		arg.DueFrom,

@@ -337,12 +337,30 @@ WHERE
     AND id = $4
     AND deleted_at IS NULL;
 -- name: ListMyWorkTasks :many
-SELECT *
-FROM tasks
+SELECT t.*
+FROM tasks t
 WHERE
-    tenant_id = sqlc.arg(tenant_id)
-    AND assignee_user_id = sqlc.arg(user_id)
-    AND archived_at IS NULL
+    t.tenant_id = sqlc.arg(tenant_id)
+    AND t.assignee_user_id = sqlc.arg(user_id)
+    AND t.archived_at IS NULL
+
+    AND EXISTS (
+        SELECT 1
+        FROM projects p
+        WHERE p.tenant_id = t.tenant_id
+          AND p.id = t.project_id
+          AND p.archived_at IS NULL
+          AND (
+              sqlc.arg(is_admin)::boolean = true
+              OR EXISTS (
+                  SELECT 1
+                  FROM project_members pm
+                  WHERE pm.tenant_id = p.tenant_id
+                    AND pm.project_id = p.id
+                    AND pm.user_id = sqlc.arg(user_id)
+              )
+          )
+    )
 
     AND (
         sqlc.narg(status_id)::uuid IS NULL

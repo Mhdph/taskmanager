@@ -1961,6 +1961,8 @@ func (s *Service) MyWork(
 		input.Identity.TenantID,
 		input.Identity.UserID,
 		MyWorkOptions{
+			IsAdmin: input.Identity.IsAdmin(),
+
 			Limit: int32(limit + 1),
 
 			Cursor: cursor,
