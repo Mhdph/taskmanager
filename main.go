@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mhdph/taskmanager/internal/ai"
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/comment"
 	"github.com/mhdph/taskmanager/internal/config"
@@ -252,6 +253,20 @@ func main() {
 		)
 
 	// -------------------------------------------------------------------------
+	// AI module
+	// -------------------------------------------------------------------------
+
+	aiService := ai.NewService(
+		ai.UnavailableClient{},
+		taskRepository,
+		commentRepository,
+		projectRepository,
+		projectAuthorizer,
+	)
+
+	aiHandler := ai.NewHandler(aiService)
+
+	// -------------------------------------------------------------------------
 	// Router
 	// -------------------------------------------------------------------------
 
@@ -279,6 +294,20 @@ func main() {
 			r.Get(
 				"/",
 				searchHandler.Search,
+			)
+		},
+	)
+
+	router.Route(
+		"/ai",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Post(
+				"/tasks/from-text",
+				aiHandler.TaskFromText,
 			)
 		},
 	)
@@ -329,6 +358,10 @@ func main() {
 					r.Get("/", taskHandler.Get)
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
+					r.Route("/ai", func(r chi.Router) {
+						r.Post("/summary", aiHandler.SummarizeTask)
+						r.Post("/suggestions", aiHandler.SuggestTask)
+					})
 					r.Route(
 						"/comments",
 						func(r chi.Router) {

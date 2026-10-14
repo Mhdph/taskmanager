@@ -474,6 +474,78 @@ func (q *Queries) ListProjectStatuses(ctx context.Context, arg ListProjectStatus
 	return items, nil
 }
 
+const listProjectTasksForAI = `-- name: ListProjectTasksForAI :many
+    SELECT
+        t.id,
+        t.title,
+        t.priority,
+        t.due_at,
+        t.completed_at,
+
+        ps.name AS status_name,
+        ps.category AS status_category
+
+    FROM tasks t
+
+    JOIN project_statuses ps
+        ON ps.tenant_id = t.tenant_id
+        AND ps.project_id = t.project_id
+        AND ps.id = t.status_id
+
+    WHERE
+        t.tenant_id = $1
+        AND t.project_id = $2
+        AND t.archived_at IS NULL
+
+    ORDER BY
+        t.updated_at DESC
+
+    LIMIT 500
+`
+
+type ListProjectTasksForAIParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+}
+
+type ListProjectTasksForAIRow struct {
+	ID             pgtype.UUID
+	Title          string
+	Priority       string
+	DueAt          pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+	StatusName     string
+	StatusCategory string
+}
+
+func (q *Queries) ListProjectTasksForAI(ctx context.Context, arg ListProjectTasksForAIParams) ([]ListProjectTasksForAIRow, error) {
+	rows, err := q.db.Query(ctx, listProjectTasksForAI, arg.TenantID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectTasksForAIRow
+	for rows.Next() {
+		var i ListProjectTasksForAIRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Priority,
+			&i.DueAt,
+			&i.CompletedAt,
+			&i.StatusName,
+			&i.StatusCategory,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjects = `-- name: ListProjects :many
 SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
 FROM projects

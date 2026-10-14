@@ -283,3 +283,31 @@ WHERE
     tenant_id = $1
     AND project_id = $2
     AND id = $3;
+
+-- name: ListProjectTasksForAI :many
+    SELECT
+        t.id,
+        t.title,
+        t.priority,
+        t.due_at,
+        t.completed_at,
+
+        ps.name AS status_name,
+        ps.category AS status_category
+
+    FROM tasks t
+
+    JOIN project_statuses ps
+        ON ps.tenant_id = t.tenant_id
+        AND ps.project_id = t.project_id
+        AND ps.id = t.status_id
+
+    WHERE
+        t.tenant_id = $1
+        AND t.project_id = $2
+        AND t.archived_at IS NULL
+
+    ORDER BY
+        t.updated_at DESC
+
+    LIMIT 500;
