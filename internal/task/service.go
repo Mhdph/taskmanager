@@ -293,6 +293,7 @@ func (s *Service) Create(
 }
 
 type ListInput struct {
+	Archived  bool
 	Identity  auth.Identity
 	ProjectID string
 
@@ -321,6 +322,11 @@ func (s *Service) List(
 			"authorize task list: %w",
 			err,
 		)
+	}
+	if input.Archived {
+		if _, err := s.projectRepository.GetForTenant(ctx, input.Identity.TenantID, input.ProjectID); err != nil {
+			return TaskPage{}, err
+		}
 	}
 
 	limit := input.Limit
@@ -399,6 +405,7 @@ func (s *Service) List(
 	}
 
 	options := ListOptions{
+		Archived: input.Archived,
 		Limit: int32(
 			limit + 1,
 		),

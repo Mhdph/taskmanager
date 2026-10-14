@@ -101,7 +101,7 @@ SELECT *
 FROM projects
 WHERE
     tenant_id = sqlc.arg(tenant_id)
-    AND archived_at IS NULL
+    AND ((archived_at IS NOT NULL) = sqlc.arg(archived)::boolean)
     AND (
         sqlc.narg(cursor_created_at)::timestamptz IS NULL
         OR
@@ -123,7 +123,7 @@ WHERE
     p.tenant_id = sqlc.arg(tenant_id)
     AND pm.tenant_id = sqlc.arg(tenant_id)
     AND pm.user_id = sqlc.arg(user_id)
-    AND p.archived_at IS NULL
+    AND ((p.archived_at IS NOT NULL) = sqlc.arg(archived)::boolean)
     AND (
         sqlc.narg(cursor_created_at)::timestamptz IS NULL
         OR
@@ -334,3 +334,8 @@ WHERE
         t.updated_at DESC
 
     LIMIT 500;
+
+-- name: RestoreProject :one
+UPDATE projects SET archived_at = NULL, updated_at = NOW()
+WHERE tenant_id = $1 AND id = $2 AND archived_at IS NOT NULL
+RETURNING *;

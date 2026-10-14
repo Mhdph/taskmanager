@@ -63,6 +63,7 @@ type UpdateInput struct {
 }
 
 type ListInput struct {
+	Archived bool
 	Identity auth.Identity
 	Limit    int
 	Cursor   string
@@ -134,8 +135,9 @@ func (s *Service) List(
 	}
 
 	options := ListOptions{
-		Limit:  int32(limit + 1),
-		Cursor: cursor,
+		Archived: input.Archived,
+		Limit:    int32(limit + 1),
+		Cursor:   cursor,
 	}
 
 	var projects []Project

@@ -61,9 +61,10 @@ type updateTaskRequest struct {
 }
 
 type taskResponse struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
-	StatusID  string `json:"statusId"`
+	ArchivedAt *time.Time `json:"archivedAt"`
+	ID         string     `json:"id"`
+	ProjectID  string     `json:"projectId"`
+	StatusID   string     `json:"statusId"`
 
 	ParentTaskID *string `json:"parentTaskId"`
 
@@ -273,9 +274,20 @@ func (h *Handler) List(
 		limit = value
 	}
 
+	archived := false
+	if raw := r.URL.Query().Get("archived"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			http.Error(w, "invalid archived filter", http.StatusBadRequest)
+			return
+		}
+		archived = parsed
+	}
+
 	page, err := h.service.List(
 		r.Context(),
 		ListInput{
+			Archived:  archived,
 			Identity:  identity,
 			ProjectID: projectID,
 
@@ -706,9 +718,10 @@ func toTaskResponse(
 	task Task,
 ) taskResponse {
 	return taskResponse{
-		ID:        task.ID,
-		ProjectID: task.ProjectID,
-		StatusID:  task.StatusID,
+		ArchivedAt: task.ArchivedAt,
+		ID:         task.ID,
+		ProjectID:  task.ProjectID,
+		StatusID:   task.StatusID,
 
 		ParentTaskID: task.ParentTaskID,
 

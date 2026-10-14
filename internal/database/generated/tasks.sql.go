@@ -722,41 +722,41 @@ FROM tasks
 WHERE
     tenant_id = $1
     AND project_id = $2
-    AND archived_at IS NULL
+    AND ((archived_at IS NOT NULL) = $3::boolean)
 
     AND (
-            $3::uuid IS NULL
-            OR status_id = $3::uuid
+            $4::uuid IS NULL
+            OR status_id = $4::uuid
         )
 
     AND (
-            $4::text IS NULL
-            OR assignee_user_id = $4::text
+            $5::text IS NULL
+            OR assignee_user_id = $5::text
         )
 
     AND (
-            $5::varchar IS NULL
-            OR priority = $5::varchar
+            $6::varchar IS NULL
+            OR priority = $6::varchar
         )
 
     AND (
-            $6::uuid IS NULL
-            OR parent_task_id = $6::uuid
+            $7::uuid IS NULL
+            OR parent_task_id = $7::uuid
         )
 
     AND (
-            $7::text IS NULL
-            OR title ILIKE '%' || $7::text || '%'
+            $8::text IS NULL
+            OR title ILIKE '%' || $8::text || '%'
         )
 
     AND (
-            $8::timestamptz IS NULL
+            $9::timestamptz IS NULL
             OR (
                 created_at,
                 id
             ) < (
-                $8::timestamptz,
-                $9::uuid
+                $9::timestamptz,
+                $10::uuid
             )
         )
 
@@ -764,12 +764,13 @@ WHERE
         created_at DESC,
         id DESC
 
-    LIMIT $10
+    LIMIT $11
 `
 
 type ListTasksForProjectParams struct {
 	TenantID        string
 	ProjectID       pgtype.UUID
+	Archived        bool
 	StatusID        pgtype.UUID
 	AssigneeUserID  pgtype.Text
 	Priority        pgtype.Text
@@ -784,6 +785,7 @@ func (q *Queries) ListTasksForProject(ctx context.Context, arg ListTasksForProje
 	rows, err := q.db.Query(ctx, listTasksForProject,
 		arg.TenantID,
 		arg.ProjectID,
+		arg.Archived,
 		arg.StatusID,
 		arg.AssigneeUserID,
 		arg.Priority,
@@ -881,6 +883,43 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 func (q *Queries) LockTaskHierarchy(ctx context.Context, lockKey string) error {
 	_, err := q.db.Exec(ctx, lockTaskHierarchy, lockKey)
 	return err
+}
+
+const restoreTask = `-- name: RestoreTask :one
+UPDATE tasks t SET archived_at = NULL, updated_at = NOW()
+WHERE t.tenant_id = $1 AND t.project_id = $2 AND t.id = $3 AND t.archived_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM projects p WHERE p.tenant_id = t.tenant_id AND p.id = t.project_id AND p.archived_at IS NULL)
+RETURNING t.id, t.tenant_id, t.project_id, t.status_id, t.parent_task_id, t.title, t.description, t.priority, t.assignee_user_id, t.created_by_user_id, t.due_at, t.completed_at, t.created_at, t.updated_at, t.archived_at, t.start_at
+`
+
+type RestoreTaskParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) RestoreTask(ctx context.Context, arg RestoreTaskParams) (Task, error) {
+	row := q.db.QueryRow(ctx, restoreTask, arg.TenantID, arg.ProjectID, arg.ID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.StatusID,
+		&i.ParentTaskID,
+		&i.Title,
+		&i.Description,
+		&i.Priority,
+		&i.AssigneeUserID,
+		&i.CreatedByUserID,
+		&i.DueAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+		&i.StartAt,
+	)
+	return i, err
 }
 
 const taskDependsTransitivelyOn = `-- name: TaskDependsTransitivelyOn :one

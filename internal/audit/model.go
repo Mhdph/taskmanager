@@ -19,6 +19,7 @@ const (
 	ActionTaskCreated       Action = "task.created"
 	ActionTaskUpdated       Action = "task.updated"
 	ActionTaskArchived      Action = "task.archived"
+	ActionTaskRestored      Action = "task.restored"
 	ActionTaskAssigned      Action = "task.assigned"
 	ActionTaskStatusChanged Action = "task.status_changed"
 

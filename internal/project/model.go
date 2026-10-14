@@ -14,8 +14,9 @@ type Project struct {
 	ArchivedAt *time.Time
 }
 type ListOptions struct {
-	Limit  int32
-	Cursor *Cursor
+	Archived bool
+	Limit    int32
+	Cursor   *Cursor
 }
 
 type ProjectPage struct {

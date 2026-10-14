@@ -444,6 +444,7 @@ func (r *Repository) ListForProject(
 	rows, err := r.queries.ListTasksForProject(
 		ctx,
 		db.ListTasksForProjectParams{
+			Archived: options.Archived,
 			TenantID: tenantID,
 
 			ProjectID: pgtype.UUID{

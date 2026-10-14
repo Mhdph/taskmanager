@@ -50,9 +50,10 @@ type addProjectMemberRequest struct {
 }
 
 type projectResponse struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
+	ArchivedAt  *time.Time `json:"archivedAt"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description"`
 
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
@@ -168,9 +169,20 @@ func (h *Handler) List(
 
 	cursor := r.URL.Query().Get("cursor")
 
+	archived := false
+	if raw := r.URL.Query().Get("archived"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			http.Error(w, "invalid archived filter", http.StatusBadRequest)
+			return
+		}
+		archived = parsed
+	}
+
 	page, err := h.service.List(
 		r.Context(),
 		ListInput{
+			Archived: archived,
 			Identity: identity,
 			Limit:    limit,
 			Cursor:   cursor,
@@ -291,6 +303,8 @@ func handleProjectError(
 	err error,
 ) {
 	switch {
+	case errors.Is(err, ErrForbidden):
+		http.Error(w, "forbidden", http.StatusForbidden)
 	case errors.Is(err, ErrNotFound):
 		http.Error(
 			w,
@@ -319,6 +333,7 @@ func handleProjectError(
 
 func toProjectResponse(project Project) projectResponse {
 	return projectResponse{
+		ArchivedAt:  project.ArchivedAt,
 		ID:          project.ID,
 		Name:        project.Name,
 		Description: project.Description,

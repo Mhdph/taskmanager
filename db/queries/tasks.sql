@@ -51,7 +51,7 @@ FROM tasks
 WHERE
     tenant_id = sqlc.arg(tenant_id)
     AND project_id = sqlc.arg(project_id)
-    AND archived_at IS NULL
+    AND ((archived_at IS NOT NULL) = sqlc.arg(archived)::boolean)
 
     AND (
             sqlc.narg(status_id)::uuid IS NULL
@@ -438,3 +438,9 @@ ORDER BY
     id DESC
 
 LIMIT sqlc.arg(page_limit);
+
+-- name: RestoreTask :one
+UPDATE tasks t SET archived_at = NULL, updated_at = NOW()
+WHERE t.tenant_id = $1 AND t.project_id = $2 AND t.id = $3 AND t.archived_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM projects p WHERE p.tenant_id = t.tenant_id AND p.id = t.project_id AND p.archived_at IS NULL)
+RETURNING t.*;

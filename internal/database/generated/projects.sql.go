@@ -589,22 +589,23 @@ SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated
 FROM projects
 WHERE
     tenant_id = $1
-    AND archived_at IS NULL
+    AND ((archived_at IS NOT NULL) = $2::boolean)
     AND (
-        $2::timestamptz IS NULL
+        $3::timestamptz IS NULL
         OR
         (created_at, id) <
         (
-            $2::timestamptz,
-            $3::uuid
+            $3::timestamptz,
+            $4::uuid
         )
     )
 ORDER BY created_at DESC, id DESC
-LIMIT $4
+LIMIT $5
 `
 
 type ListProjectsForTenantParams struct {
 	TenantID        string
+	Archived        bool
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	PageLimit       int32
@@ -613,6 +614,7 @@ type ListProjectsForTenantParams struct {
 func (q *Queries) ListProjectsForTenant(ctx context.Context, arg ListProjectsForTenantParams) ([]Project, error) {
 	rows, err := q.db.Query(ctx, listProjectsForTenant,
 		arg.TenantID,
+		arg.Archived,
 		arg.CursorCreatedAt,
 		arg.CursorID,
 		arg.PageLimit,
@@ -653,23 +655,24 @@ WHERE
     p.tenant_id = $1
     AND pm.tenant_id = $1
     AND pm.user_id = $2
-    AND p.archived_at IS NULL
+    AND ((p.archived_at IS NOT NULL) = $3::boolean)
     AND (
-        $3::timestamptz IS NULL
+        $4::timestamptz IS NULL
         OR
         (p.created_at, p.id) <
         (
-            $3::timestamptz,
-            $4::uuid
+            $4::timestamptz,
+            $5::uuid
         )
     )
 ORDER BY p.created_at DESC, p.id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListProjectsForUserParams struct {
 	TenantID        string
 	UserID          string
+	Archived        bool
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	PageLimit       int32
@@ -679,6 +682,7 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUs
 	rows, err := q.db.Query(ctx, listProjectsForUser,
 		arg.TenantID,
 		arg.UserID,
+		arg.Archived,
 		arg.CursorCreatedAt,
 		arg.CursorID,
 		arg.PageLimit,
@@ -802,6 +806,33 @@ func (q *Queries) ProjectStatusHasTasks(ctx context.Context, arg ProjectStatusHa
 	var has_tasks bool
 	err := row.Scan(&has_tasks)
 	return has_tasks, err
+}
+
+const restoreProject = `-- name: RestoreProject :one
+UPDATE projects SET archived_at = NULL, updated_at = NOW()
+WHERE tenant_id = $1 AND id = $2 AND archived_at IS NOT NULL
+RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+`
+
+type RestoreProjectParams struct {
+	TenantID string
+	ID       pgtype.UUID
+}
+
+func (q *Queries) RestoreProject(ctx context.Context, arg RestoreProjectParams) (Project, error) {
+	row := q.db.QueryRow(ctx, restoreProject, arg.TenantID, arg.ID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
 }
 
 const updateProject = `-- name: UpdateProject :one

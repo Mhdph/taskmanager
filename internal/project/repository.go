@@ -290,6 +290,7 @@ func (r *Repository) ListForTenant(
 	rows, err := r.queries.ListProjectsForTenant(
 		ctx,
 		db.ListProjectsForTenantParams{
+			Archived:        options.Archived,
 			TenantID:        tenantID,
 			CursorCreatedAt: cursorCreatedAt,
 			CursorID:        cursorID,
@@ -351,6 +352,7 @@ func (r *Repository) ListForUser(
 	rows, err := r.queries.ListProjectsForUser(
 		ctx,
 		db.ListProjectsForUserParams{
+			Archived:        options.Archived,
 			TenantID:        tenantID,
 			UserID:          userID,
 			CursorCreatedAt: cursorCreatedAt,

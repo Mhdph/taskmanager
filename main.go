@@ -342,6 +342,7 @@ func main() {
 			r.Get("/", projectHandler.Get)
 			r.Patch("/", projectHandler.Update)
 			r.Delete("/", projectHandler.Archive)
+			r.Post("/restore", projectHandler.Restore)
 
 			r.Route("/members", func(r chi.Router) {
 				r.Get("/", projectHandler.ListMembers)
@@ -385,6 +386,7 @@ func main() {
 					r.Get("/", taskHandler.Get)
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
+					r.Post("/restore", taskHandler.Restore)
 					r.Route("/time-entries", func(r chi.Router) {
 						r.Get("/", taskHandler.ListTimeEntries)
 						r.Post("/start", taskHandler.StartTimer)

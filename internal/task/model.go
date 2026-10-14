@@ -44,8 +44,9 @@ type Cursor struct {
 }
 
 type ListOptions struct {
-	Limit  int32
-	Cursor *Cursor
+	Archived bool
+	Limit    int32
+	Cursor   *Cursor
 
 	StatusID       *string
 	AssigneeUserID *string
