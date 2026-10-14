@@ -96,6 +96,20 @@ type TaskDependency struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type TaskTimeEntry struct {
+	ID              pgtype.UUID
+	TenantID        string
+	ProjectID       pgtype.UUID
+	TaskID          pgtype.UUID
+	UserID          string
+	StartedAt       pgtype.Timestamptz
+	EndedAt         pgtype.Timestamptz
+	DurationSeconds int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
 type TaskWatcher struct {
 	TenantID  string
 	ProjectID pgtype.UUID

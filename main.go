@@ -17,6 +17,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/comment"
 	"github.com/mhdph/taskmanager/internal/config"
+	"github.com/mhdph/taskmanager/internal/dashboard"
 	database "github.com/mhdph/taskmanager/internal/database/generated"
 	"github.com/mhdph/taskmanager/internal/hosted"
 	"github.com/mhdph/taskmanager/internal/notification"
@@ -231,6 +232,26 @@ func main() {
 		)
 
 	// -------------------------------------------------------------------------
+	// Dashboard module
+	// -------------------------------------------------------------------------
+
+	dashboardRepository :=
+		dashboard.NewRepository(
+			queries,
+		)
+
+	dashboardService :=
+		dashboard.NewService(
+			dashboardRepository,
+			projectAuthorizer,
+		)
+
+	dashboardHandler :=
+		dashboard.NewHandler(
+			dashboardService,
+		)
+
+	// -------------------------------------------------------------------------
 	// Router
 	// -------------------------------------------------------------------------
 
@@ -246,6 +267,20 @@ func main() {
 	).Get(
 		"/me",
 		handleMe,
+	)
+
+	router.Route(
+		"/search",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				searchHandler.Search,
+			)
+		},
 	)
 
 	// Projects
@@ -281,19 +316,9 @@ func main() {
 					)
 				},
 			)
-
-			router.Route(
-				"/search",
-				func(r chi.Router) {
-					r.Use(
-						authMiddleware.Authenticate,
-					)
-
-					r.Get(
-						"/",
-						searchHandler.Search,
-					)
-				},
+			r.Get(
+				"/dashboard",
+				dashboardHandler.Get,
 			)
 
 			r.Route("/tasks", func(r chi.Router) {

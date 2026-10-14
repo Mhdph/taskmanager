@@ -35,4 +35,6 @@ const (
 	PermissionViewTaskAttachments Permission = "view_task_attachments"
 
 	PermissionManageTaskAttachments Permission = "manage_task_attachments"
+
+	PermissionViewDashboard Permission = "view_dashboard"
 )
