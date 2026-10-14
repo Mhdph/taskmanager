@@ -17,6 +17,12 @@ type Config struct {
 	Notification NotificationConfig
 
 	Storage StorageConfig
+	AI      AIConfig
+}
+type AIConfig struct {
+	APIKey  string
+	BaseURL string
+	Model   string
 }
 type ServerConfig struct {
 	Host string
@@ -60,6 +66,11 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
+		AI: AIConfig{
+			APIKey:  os.Getenv("DEEPSEEK_API_KEY"),
+			BaseURL: getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+			Model:   getEnv("DEEPSEEK_MODEL", "deepseek-flash"),
+		},
 		Environment: getEnv("APP_ENV", "development"),
 
 		Server: ServerConfig{

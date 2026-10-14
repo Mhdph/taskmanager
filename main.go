@@ -265,8 +265,18 @@ func main() {
 	// AI module
 	// -------------------------------------------------------------------------
 
+	var aiClient ai.Client = ai.UnavailableClient{}
+	if cfg.AI.APIKey != "" {
+		aiClient, err = ai.NewDeepSeekClient(cfg.AI.APIKey, cfg.AI.BaseURL, cfg.AI.Model, &http.Client{
+			Timeout:       25 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		})
+		if err != nil {
+			log.Fatalf("configure AI provider: %v", err)
+		}
+	}
 	aiService := ai.NewService(
-		ai.UnavailableClient{},
+		aiClient,
 		taskRepository,
 		commentRepository,
 		projectRepository,
@@ -365,6 +375,7 @@ func main() {
 				"/dashboard",
 				dashboardHandler.Get,
 			)
+			r.Post("/ai/summary", aiHandler.SummarizeProject)
 
 			r.Route("/tasks", func(r chi.Router) {
 				r.Post("/", taskHandler.Create)

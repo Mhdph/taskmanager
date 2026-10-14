@@ -110,6 +110,13 @@ func (s *Service) buildTaskContext(
 	if err != nil {
 		return TaskContext{}, err
 	}
+	// Summaries include comments, so task visibility alone is insufficient.
+	if err := s.projectAuthorizer.Require(ctx, input.Identity, input.ProjectID, project.PermissionViewTaskComments); err != nil {
+		return TaskContext{}, err
+	}
+	if _, err := s.projectRepository.GetForTenant(ctx, input.Identity.TenantID, input.ProjectID); err != nil {
+		return TaskContext{}, err
+	}
 
 	item, err :=
 		s.taskRepository.GetForProject(
