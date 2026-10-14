@@ -8,6 +8,8 @@ RUN tar -xzf /tmp/minio.tar.gz --strip-components=1 -C /src \
     && CGO_ENABLED=0 go build -trimpath -o /out/minio .
 
 FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/minio /usr/local/bin/minio
 COPY --from=build /src/LICENSE /usr/share/doc/minio/LICENSE

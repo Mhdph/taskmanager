@@ -12,6 +12,7 @@ import (
 
 type Client struct {
 	client *minio.Client
+	signer *minio.Client
 
 	bucket string
 }
@@ -44,8 +45,31 @@ func NewClient(
 
 	return &Client{
 		client: client,
+		signer: client,
 		bucket: bucket,
 	}, nil
+}
+
+// Public download URLs may use a different host or TLS scheme than the internal
+// storage connection; signing still uses the same bucket and credentials.
+func (c *Client) SetPublicURL(publicURL, accessKey, secretKey string) error {
+	u, err := url.Parse(publicURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return fmt.Errorf("invalid MINIO_PUBLIC_URL")
+	}
+	c.signer, err = minio.New(u.Host, &minio.Options{Creds: credentials.NewStaticV4(accessKey, secretKey, ""), Secure: u.Scheme == "https", Region: "us-east-1"})
+	return err
+}
+
+func (c *Client) CheckHealth(ctx context.Context) error {
+	exists, err := c.client.BucketExists(ctx, c.bucket)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("storage bucket unavailable")
+	}
+	return nil
 }
 
 func (c *Client) EnsureBucket(
@@ -146,7 +170,7 @@ func (c *Client) PresignedDownloadURL(
 	)
 
 	signedURL, err :=
-		c.client.PresignedGetObject(
+		c.signer.PresignedGetObject(
 			ctx,
 			c.bucket,
 			objectKey,

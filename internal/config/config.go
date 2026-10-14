@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
 type Config struct {
@@ -37,7 +38,8 @@ type StorageConfig struct {
 
 	Bucket string
 
-	UseSSL bool
+	UseSSL    bool
+	PublicURL string
 
 	MaxUploadSize int64
 }
@@ -63,6 +65,10 @@ func Load() (Config, error) {
 	graphQLEndpoint, err := requireEnv("HOSTED_GRAPHQL_ENDPOINT")
 	if err != nil {
 		return Config{}, err
+	}
+	useSSL, err := strconv.ParseBool(getEnv("MINIO_USE_SSL", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("MINIO_USE_SSL must be a boolean")
 	}
 
 	cfg := Config{
@@ -108,7 +114,8 @@ func Load() (Config, error) {
 				"MINIO_BUCKET",
 			),
 
-			UseSSL: false,
+			UseSSL:    useSSL,
+			PublicURL: os.Getenv("MINIO_PUBLIC_URL"),
 
 			MaxUploadSize: 25 * 1024 * 1024,
 		},

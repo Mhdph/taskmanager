@@ -93,8 +93,15 @@ func main() {
 		)
 	}
 
+	if cfg.Storage.PublicURL != "" {
+		if err := storageClient.SetPublicURL(cfg.Storage.PublicURL, cfg.Storage.AccessKey, cfg.Storage.SecretKey); err != nil {
+			log.Fatalf("configure public storage URL: %v", err)
+		}
+	}
+	storageCtx, cancelStorage := context.WithTimeout(ctx, 15*time.Second)
+	defer cancelStorage()
 	if err := storageClient.EnsureBucket(
-		ctx,
+		storageCtx,
 	); err != nil {
 		log.Fatalf(
 			"initialize storage bucket: %v",
@@ -293,7 +300,8 @@ func main() {
 
 	// Public routes
 	router.Get("/", handleHome)
-	router.Get("/health", handleHealth)
+	router.Get("/health", readinessHandler(pool.Ping, storageClient.CheckHealth))
+	router.Get("/live", handleHealth)
 
 	// Authenticated user
 	router.With(
