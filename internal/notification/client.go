@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type Client struct {
@@ -43,6 +48,23 @@ func (c *Client) Send(
 			err,
 		)
 	}
+	return c.sendPayload(ctx, payload, uuid.NewString())
+}
+
+type deliveryError struct {
+	err       error
+	retryable bool
+}
+
+func (e *deliveryError) Error() string { return e.err.Error() }
+func (e *deliveryError) Unwrap() error { return e.err }
+
+func isRetryable(err error) bool {
+	var delivery *deliveryError
+	return errors.As(err, &delivery) && delivery.retryable
+}
+
+func (c *Client) sendPayload(ctx context.Context, payload []byte, deliveryID string) error {
 
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -61,13 +83,20 @@ func (c *Client) Send(
 		"Content-Type",
 		"application/json",
 	)
+	req.Header.Set("Idempotency-Key", deliveryID)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf(
+		cause := err
+		var urlError *url.Error
+		if errors.As(err, &urlError) {
+			cause = urlError.Err
+		}
+		var networkError net.Error
+		return &deliveryError{err: fmt.Errorf(
 			"send notification request: %w",
 			err,
-		)
+		), retryable: errors.As(cause, &networkError) || errors.Is(cause, io.EOF) || errors.Is(cause, io.ErrUnexpectedEOF)}
 	}
 
 	defer resp.Body.Close()
@@ -85,11 +114,11 @@ func (c *Client) Send(
 		),
 	)
 
-	return fmt.Errorf(
+	return &deliveryError{err: fmt.Errorf(
 		"notification service returned status %d: %s",
 		resp.StatusCode,
 		strings.TrimSpace(
 			string(body),
 		),
-	)
+	), retryable: resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500}
 }

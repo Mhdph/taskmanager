@@ -130,6 +130,7 @@ func main() {
 			cfg.Notification.BaseURL,
 			notificationHTTPClient,
 		)
+	notificationDispatcher := notification.NewDispatcher(notificationClient)
 
 	// -------------------------------------------------------------------------
 	// Authentication
@@ -188,7 +189,7 @@ func main() {
 		taskRepository,
 		projectRepository,
 		projectAuthorizer,
-		notificationClient,
+		notificationDispatcher,
 		storageClient,
 		auditRepository,
 		cfg.Storage.MaxUploadSize,
@@ -214,7 +215,7 @@ func main() {
 			taskRepository,
 			projectRepository,
 			projectAuthorizer,
-			notificationClient,
+			notificationDispatcher,
 		)
 
 	commentHandler :=
@@ -505,7 +506,11 @@ func main() {
 	defer cancelShutdown()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("shutdown server: %v", err)
+		log.Printf("shutdown server: %v", err)
+	}
+
+	if err := notificationDispatcher.Close(shutdownCtx); err != nil {
+		log.Printf("drain notification queue: %v", err)
 	}
 
 	log.Println("server stopped")
