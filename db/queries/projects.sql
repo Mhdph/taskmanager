@@ -244,6 +244,22 @@ WHERE
     AND project_id = $2
     AND id = $3;
 
+-- name: LockProjectStatusForUpdate :one
+SELECT * FROM project_statuses
+WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+FOR UPDATE;
+
+-- name: LockProjectStatusForTask :one
+SELECT * FROM project_statuses
+WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+FOR SHARE;
+
+-- name: ProjectStatusHasTasks :one
+SELECT EXISTS (
+    SELECT 1 FROM tasks
+    WHERE tenant_id = $1 AND project_id = $2 AND status_id = $3
+) AS has_tasks;
+
     -- name: CreateProjectStatus :one
     INSERT INTO project_statuses (
         id,

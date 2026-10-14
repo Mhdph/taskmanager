@@ -1108,7 +1108,42 @@ func (r *Repository) UpdateStatus(
 		}
 	}
 
-	row, err := r.queries.UpdateProjectStatus(
+	queries := r.queries
+	var categoryTx pgx.Tx
+	if params.Category != nil {
+		categoryTx, err = r.db.Begin(ctx)
+		if err != nil {
+			return ProjectStatus{}, fmt.Errorf("begin status category transaction: %w", err)
+		}
+		defer categoryTx.Rollback(ctx)
+		queries = r.queries.WithTx(categoryTx)
+		current, err := queries.LockProjectStatusForUpdate(ctx, db.LockProjectStatusForUpdateParams{
+			TenantID:  params.TenantID,
+			ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+			ID:        pgtype.UUID{Bytes: statusID, Valid: true},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectStatus{}, ErrStatusNotFound
+		}
+		if err != nil {
+			return ProjectStatus{}, fmt.Errorf("lock status category: %w", err)
+		}
+		if current.Category != string(*params.Category) {
+			hasTasks, err := queries.ProjectStatusHasTasks(ctx, db.ProjectStatusHasTasksParams{
+				TenantID:  params.TenantID,
+				ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+				StatusID:  pgtype.UUID{Bytes: statusID, Valid: true},
+			})
+			if err != nil {
+				return ProjectStatus{}, fmt.Errorf("check status usage: %w", err)
+			}
+			if hasTasks {
+				return ProjectStatus{}, ErrStatusInUse
+			}
+		}
+	}
+
+	row, err := queries.UpdateProjectStatus(
 		ctx,
 		db.UpdateProjectStatusParams{
 			Name:     name,
@@ -1153,6 +1188,11 @@ func (r *Repository) UpdateStatus(
 		)
 	}
 
+	if categoryTx != nil {
+		if err := categoryTx.Commit(ctx); err != nil {
+			return ProjectStatus{}, fmt.Errorf("commit status category transaction: %w", err)
+		}
+	}
 	return projectStatusFromDB(row), nil
 }
 

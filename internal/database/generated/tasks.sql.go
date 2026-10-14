@@ -837,6 +837,43 @@ func (q *Queries) LockDependencyGraph(ctx context.Context, lockKey string) error
 	return err
 }
 
+const lockTaskForUpdate = `-- name: LockTaskForUpdate :one
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at FROM tasks
+WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+    AND archived_at IS NULL
+FOR UPDATE
+`
+
+type LockTaskForUpdateParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) LockTaskForUpdate(ctx context.Context, arg LockTaskForUpdateParams) (Task, error) {
+	row := q.db.QueryRow(ctx, lockTaskForUpdate, arg.TenantID, arg.ProjectID, arg.ID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.StatusID,
+		&i.ParentTaskID,
+		&i.Title,
+		&i.Description,
+		&i.Priority,
+		&i.AssigneeUserID,
+		&i.CreatedByUserID,
+		&i.DueAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+		&i.StartAt,
+	)
+	return i, err
+}
+
 const lockTaskHierarchy = `-- name: LockTaskHierarchy :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 `

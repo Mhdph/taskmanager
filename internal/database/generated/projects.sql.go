@@ -730,6 +730,80 @@ func (q *Queries) LockProjectForMembershipMutation(ctx context.Context, arg Lock
 	return id, err
 }
 
+const lockProjectStatusForTask = `-- name: LockProjectStatusForTask :one
+SELECT id, tenant_id, project_id, name, position, category, created_at FROM project_statuses
+WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+FOR SHARE
+`
+
+type LockProjectStatusForTaskParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) LockProjectStatusForTask(ctx context.Context, arg LockProjectStatusForTaskParams) (ProjectStatus, error) {
+	row := q.db.QueryRow(ctx, lockProjectStatusForTask, arg.TenantID, arg.ProjectID, arg.ID)
+	var i ProjectStatus
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Position,
+		&i.Category,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockProjectStatusForUpdate = `-- name: LockProjectStatusForUpdate :one
+SELECT id, tenant_id, project_id, name, position, category, created_at FROM project_statuses
+WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+FOR UPDATE
+`
+
+type LockProjectStatusForUpdateParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) LockProjectStatusForUpdate(ctx context.Context, arg LockProjectStatusForUpdateParams) (ProjectStatus, error) {
+	row := q.db.QueryRow(ctx, lockProjectStatusForUpdate, arg.TenantID, arg.ProjectID, arg.ID)
+	var i ProjectStatus
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Position,
+		&i.Category,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const projectStatusHasTasks = `-- name: ProjectStatusHasTasks :one
+SELECT EXISTS (
+    SELECT 1 FROM tasks
+    WHERE tenant_id = $1 AND project_id = $2 AND status_id = $3
+) AS has_tasks
+`
+
+type ProjectStatusHasTasksParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	StatusID  pgtype.UUID
+}
+
+func (q *Queries) ProjectStatusHasTasks(ctx context.Context, arg ProjectStatusHasTasksParams) (bool, error) {
+	row := q.db.QueryRow(ctx, projectStatusHasTasks, arg.TenantID, arg.ProjectID, arg.StatusID)
+	var has_tasks bool
+	err := row.Scan(&has_tasks)
+	return has_tasks, err
+}
+
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects
     SET

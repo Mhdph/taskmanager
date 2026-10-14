@@ -39,6 +39,12 @@ WHERE
     AND id = $3
     AND archived_at IS NULL;
 
+-- name: LockTaskForUpdate :one
+SELECT * FROM tasks
+WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+    AND archived_at IS NULL
+FOR UPDATE;
+
 -- name: ListTasksForProject :many
 SELECT *
 FROM tasks

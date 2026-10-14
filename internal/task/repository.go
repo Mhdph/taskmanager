@@ -140,16 +140,22 @@ func (r *Repository) Create(
 		}
 	}
 
-	var completedAt pgtype.Timestamptz
-
-	if params.CompletedAt != nil {
-		completedAt = pgtype.Timestamptz{
-			Time:  *params.CompletedAt,
-			Valid: true,
-		}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Task{}, fmt.Errorf("begin task creation transaction: %w", err)
 	}
-
-	row, err := r.queries.CreateTask(
+	defer tx.Rollback(ctx)
+	queries := r.queries.WithTx(tx)
+	category, err := lockTaskStatus(ctx, queries, params.TenantID, projectID, pgtype.UUID{Bytes: statusID, Valid: true})
+	if err != nil {
+		return Task{}, err
+	}
+	// The service may have read the category before an edit committed.
+	var completedAt pgtype.Timestamptz
+	if value := completedAtForCreate(category, time.Now().UTC()); value != nil {
+		completedAt = pgtype.Timestamptz{Time: *value, Valid: true}
+	}
+	row, err := queries.CreateTask(
 		ctx,
 		db.CreateTaskParams{
 			ID: pgtype.UUID{
@@ -193,6 +199,9 @@ func (r *Repository) Create(
 		)
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, fmt.Errorf("commit task creation transaction: %w", err)
+	}
 	return taskFromDB(row), nil
 }
 
@@ -630,45 +639,72 @@ func (r *Repository) Update(
 	}
 
 	queries := r.queries
-	var parentTx pgx.Tx
-	if params.UpdateParentTask {
-		parentTx, err = r.db.Begin(ctx)
+	var mutationTx pgx.Tx
+	if params.UpdateParentTask || params.StatusID != nil {
+		mutationTx, err = r.db.Begin(ctx)
 		if err != nil {
-			return Task{}, fmt.Errorf("begin task parent transaction: %w", err)
+			return Task{}, fmt.Errorf("begin task update transaction: %w", err)
 		}
-		defer parentTx.Rollback(ctx)
-		queries = r.queries.WithTx(parentTx)
-		lockKey := "task-parent:" + params.TenantID + ":" + projectID.String()
-		if err := queries.LockTaskHierarchy(ctx, lockKey); err != nil {
-			return Task{}, fmt.Errorf("lock task hierarchy: %w", err)
+		defer mutationTx.Rollback(ctx)
+		queries = r.queries.WithTx(mutationTx)
+		if params.UpdateParentTask {
+			lockKey := "task-parent:" + params.TenantID + ":" + projectID.String()
+			if err := queries.LockTaskHierarchy(ctx, lockKey); err != nil {
+				return Task{}, fmt.Errorf("lock task hierarchy: %w", err)
+			}
+			if parentTaskID.Valid {
+				if parentTaskID.Bytes == taskID {
+					return Task{}, ErrInvalidParentTask
+				}
+				_, err := queries.GetTaskForProject(ctx, db.GetTaskForProjectParams{
+					TenantID:  params.TenantID,
+					ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+					ID:        parentTaskID,
+				})
+				if errors.Is(err, pgx.ErrNoRows) {
+					return Task{}, ErrParentTaskNotFound
+				}
+				if err != nil {
+					return Task{}, fmt.Errorf("validate task parent: %w", err)
+				}
+				wouldCycle, err := queries.TaskParentWouldCycle(ctx, db.TaskParentWouldCycleParams{
+					TenantID:     params.TenantID,
+					ProjectID:    pgtype.UUID{Bytes: projectID, Valid: true},
+					ParentTaskID: parentTaskID,
+					TaskID:       pgtype.UUID{Bytes: taskID, Valid: true},
+				})
+				if err != nil {
+					return Task{}, fmt.Errorf("check task parent cycle: %w", err)
+				}
+				if wouldCycle {
+					return Task{}, ErrInvalidParentTask
+				}
+			}
 		}
-		if parentTaskID.Valid {
-			if parentTaskID.Bytes == taskID {
-				return Task{}, ErrInvalidParentTask
-			}
-			_, err := queries.GetTaskForProject(ctx, db.GetTaskForProjectParams{
-				TenantID:  params.TenantID,
-				ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
-				ID:        parentTaskID,
-			})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return Task{}, ErrParentTaskNotFound
-			}
-			if err != nil {
-				return Task{}, fmt.Errorf("validate task parent: %w", err)
-			}
-			wouldCycle, err := queries.TaskParentWouldCycle(ctx, db.TaskParentWouldCycleParams{
-				TenantID:     params.TenantID,
-				ProjectID:    pgtype.UUID{Bytes: projectID, Valid: true},
-				ParentTaskID: parentTaskID,
-				TaskID:       pgtype.UUID{Bytes: taskID, Valid: true},
-			})
-			if err != nil {
-				return Task{}, fmt.Errorf("check task parent cycle: %w", err)
-			}
-			if wouldCycle {
-				return Task{}, ErrInvalidParentTask
-			}
+	}
+
+	if params.StatusID != nil {
+		category, err := lockTaskStatus(ctx, queries, params.TenantID, projectID, statusID)
+		if err != nil {
+			return Task{}, err
+		}
+		current, err := queries.LockTaskForUpdate(ctx, db.LockTaskForUpdateParams{
+			TenantID:  params.TenantID,
+			ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+			ID:        pgtype.UUID{Bytes: taskID, Valid: true},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrTaskNotFound
+		}
+		if err != nil {
+			return Task{}, fmt.Errorf("lock current task: %w", err)
+		}
+		item := taskFromDB(current)
+		update, value := completedAtForStatusChange(item.CompletedAt, current.StatusID != statusID, category, time.Now().UTC())
+		params.UpdateCompletedAt = update
+		completedAt = pgtype.Timestamptz{}
+		if value != nil {
+			completedAt = pgtype.Timestamptz{Time: *value, Valid: true}
 		}
 	}
 
@@ -727,9 +763,9 @@ func (r *Repository) Update(
 		)
 	}
 
-	if parentTx != nil {
-		if err := parentTx.Commit(ctx); err != nil {
-			return Task{}, fmt.Errorf("commit task parent transaction: %w", err)
+	if mutationTx != nil {
+		if err := mutationTx.Commit(ctx); err != nil {
+			return Task{}, fmt.Errorf("commit task update transaction: %w", err)
 		}
 	}
 	return taskFromDB(row), nil
