@@ -72,6 +72,8 @@ func managerHasPermission(
 	permission Permission,
 ) bool {
 	switch permission {
+	case PermissionViewTaskTime, PermissionTrackTaskTime:
+		return true
 	case PermissionViewProject,
 		PermissionEditProject,
 		PermissionViewMembers,
@@ -103,6 +105,8 @@ func memberHasPermission(
 	permission Permission,
 ) bool {
 	switch permission {
+	case PermissionViewTaskTime, PermissionTrackTaskTime:
+		return true
 	case PermissionViewProject,
 		PermissionViewMembers,
 		PermissionViewStatuses,
@@ -128,6 +132,8 @@ func viewerHasPermission(
 	permission Permission,
 ) bool {
 	switch permission {
+	case PermissionViewTaskTime:
+		return true
 	case PermissionViewProject,
 		PermissionViewMembers,
 		PermissionViewStatuses,

@@ -374,6 +374,12 @@ func main() {
 					r.Get("/", taskHandler.Get)
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
+					r.Route("/time-entries", func(r chi.Router) {
+						r.Get("/", taskHandler.ListTimeEntries)
+						r.Post("/start", taskHandler.StartTimer)
+						r.Post("/stop", taskHandler.StopTimer)
+						r.Delete("/{entryID}", taskHandler.DeleteTimeEntry)
+					})
 					r.Route("/watchers", func(r chi.Router) {
 						r.Get("/", taskHandler.ListWatchers)
 						r.Post("/", taskHandler.AddWatcher)
