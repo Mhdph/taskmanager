@@ -219,6 +219,16 @@ func main() {
 			queries,
 		)
 
+	// Activity module (read access to the audit feed)
+	auditService := audit.NewService(
+		auditRepository,
+		projectAuthorizer,
+	)
+
+	auditHandler := audit.NewHandler(
+		auditService,
+	)
+
 	taskService := task.NewService(
 		taskRepository,
 		projectRepository,
@@ -421,6 +431,21 @@ func main() {
 		},
 	)
 
+	// Activity (tenant-wide audit feed, scoped by project membership)
+	router.Route(
+		"/activity",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				auditHandler.Activity,
+			)
+		},
+	)
+
 	// Favorites (personal bookmarks over tasks and projects)
 	router.Route(
 		"/favorites",
@@ -528,6 +553,7 @@ func main() {
 			r.Patch("/", projectHandler.Update)
 			r.Delete("/", projectHandler.Archive)
 			r.Post("/restore", projectHandler.Restore)
+			r.Get("/activity", auditHandler.ProjectActivity)
 
 			r.Route("/members", func(r chi.Router) {
 				r.Get("/", projectHandler.ListMembers)

@@ -77,6 +77,117 @@ func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) 
 	return i, err
 }
 
+const listAuditLogsForTenant = `-- name: ListAuditLogsForTenant :many
+SELECT a.id, a.tenant_id, a.actor_user_id, a.action, a.entity_type, a.entity_id, a.project_id, a.task_id, a.metadata, a.created_at
+FROM audit_logs a
+WHERE
+    a.tenant_id = $1
+
+    AND (
+        $2::boolean
+        OR EXISTS (
+            SELECT 1
+            FROM project_members pm
+            WHERE
+                pm.tenant_id = a.tenant_id
+                AND pm.project_id = a.project_id
+                AND pm.user_id = $3
+        )
+    )
+
+    AND (
+        $4::uuid IS NULL
+        OR a.project_id = $4::uuid
+    )
+
+    AND (
+        $5::uuid IS NULL
+        OR a.task_id = $5::uuid
+    )
+
+    AND (
+        $6::text IS NULL
+        OR a.actor_user_id = $6::text
+    )
+
+    AND (
+        $7::text IS NULL
+        OR a.entity_type = $7::text
+    )
+
+    AND (
+        $8::timestamptz IS NULL
+        OR (
+            a.created_at,
+            a.id
+        ) < (
+            $8::timestamptz,
+            $9::uuid
+        )
+    )
+
+ORDER BY
+    a.created_at DESC,
+    a.id DESC
+
+LIMIT $10
+`
+
+type ListAuditLogsForTenantParams struct {
+	TenantID        string
+	IsAdmin         bool
+	UserID          string
+	ProjectID       pgtype.UUID
+	TaskID          pgtype.UUID
+	ActorUserID     pgtype.Text
+	EntityType      pgtype.Text
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListAuditLogsForTenant(ctx context.Context, arg ListAuditLogsForTenantParams) ([]AuditLog, error) {
+	rows, err := q.db.Query(ctx, listAuditLogsForTenant,
+		arg.TenantID,
+		arg.IsAdmin,
+		arg.UserID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.ActorUserID,
+		arg.EntityType,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditLog
+	for rows.Next() {
+		var i AuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ActorUserID,
+			&i.Action,
+			&i.EntityType,
+			&i.EntityID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectAuditLogs = `-- name: ListProjectAuditLogs :many
 SELECT id, tenant_id, actor_user_id, action, entity_type, entity_id, project_id, task_id, metadata, created_at
 FROM audit_logs
