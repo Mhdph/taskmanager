@@ -86,8 +86,8 @@ type UpdateInput struct {
 	Identity auth.Identity
 	UserID   string
 
-	Role      *Role
-	Title     *string
+	Role       *Role
+	Title      *string
 	ClearTitle bool
 }
 

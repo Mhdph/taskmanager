@@ -406,6 +406,21 @@ func main() {
 		},
 	)
 
+	// My work (cross-project task list for the authenticated user)
+	router.Route(
+		"/my-work",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				taskHandler.MyWork,
+			)
+		},
+	)
+
 	// Favorites (personal bookmarks over tasks and projects)
 	router.Route(
 		"/favorites",
@@ -529,19 +544,6 @@ func main() {
 				r.Delete("/{statusID}", projectHandler.DeleteStatus)
 			})
 
-			router.Route(
-				"/my-work",
-				func(r chi.Router) {
-					r.Use(
-						authMiddleware.Authenticate,
-					)
-
-					r.Get(
-						"/",
-						taskHandler.MyWork,
-					)
-				},
-			)
 			r.Get(
 				"/dashboard",
 				dashboardHandler.Get,

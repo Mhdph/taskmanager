@@ -171,24 +171,6 @@ FROM projects
 WHERE tenant_id = sqlc.arg(tenant_id)
   AND id = sqlc.arg(project_id)
 FOR UPDATE;
-    -- name: UpdateProject :one
-    UPDATE projects
-    SET
-        name = COALESCE(
-            sqlc.narg(name)::varchar,
-            name
-        ),
-        description = CASE
-            WHEN sqlc.arg(update_description)::boolean
-            THEN sqlc.narg(description)::text
-            ELSE description
-        END,
-        updated_at = NOW()
-    WHERE
-        tenant_id = sqlc.arg(tenant_id)
-        AND id = sqlc.arg(id)
-        AND archived_at IS NULL
-    RETURNING *;
 
 -- name: UpdateProject :one
 UPDATE projects

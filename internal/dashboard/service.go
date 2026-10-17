@@ -19,11 +19,9 @@ func NewService(
 	projectAuthorizer *project.Authorizer,
 ) *Service {
 	return &Service{
-		repository:
-			repository,
+		repository: repository,
 
-		projectAuthorizer:
-			projectAuthorizer,
+		projectAuthorizer: projectAuthorizer,
 	}
 }
 
