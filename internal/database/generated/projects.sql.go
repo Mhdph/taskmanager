@@ -102,14 +102,16 @@ INSERT INTO projects (
     tenant_id,
     name,
     description,
-    created_by_user_id
+    created_by_user_id,
+    team_id
 )
 VALUES (
     $1,
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6
 )
 RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 `
@@ -120,6 +122,7 @@ type CreateProjectParams struct {
 	Name            string
 	Description     pgtype.Text
 	CreatedByUserID string
+	TeamID          pgtype.UUID
 }
 
 func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
@@ -129,6 +132,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		arg.Name,
 		arg.Description,
 		arg.CreatedByUserID,
+		arg.TeamID,
 	)
 	var i Project
 	err := row.Scan(

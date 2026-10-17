@@ -6,11 +6,19 @@ import (
 
 type Middleware struct {
 	resolver *Resolver
+
+	// devMode skips hosted identity resolution and derives identities
+	// from the USER-ID/APP-ID headers (labels/dev builds only).
+	devMode bool
 }
 
-func NewMiddleware(resolver *Resolver) *Middleware {
+func NewMiddleware(
+	resolver *Resolver,
+	devMode bool,
+) *Middleware {
 	return &Middleware{
 		resolver: resolver,
+		devMode:  devMode,
 	}
 }
 
@@ -21,9 +29,44 @@ func (m *Middleware) Authenticate(
 	return http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 
-			token := r.Header.Get("X-APIKEY")
 			userID := r.Header.Get("USER-ID")
 			appID := r.Header.Get("APP-ID")
+
+			// Dev identity mode: resolve locally from the headers. The
+			// hosted platform remains the auth source of truth when
+			// dev mode is disabled.
+			if m.devMode && userID != "" {
+				identity, err := m.resolver.ResolveDev(
+					r.Context(),
+					ResolveInput{
+						UserID: userID,
+						AppID:  appID,
+					},
+				)
+				if err != nil {
+					http.Error(
+						w,
+						"unauthorized",
+						http.StatusUnauthorized,
+					)
+
+					return
+				}
+
+				ctx := WithIdentity(
+					r.Context(),
+					identity,
+				)
+
+				next.ServeHTTP(
+					w,
+					r.WithContext(ctx),
+				)
+
+				return
+			}
+
+			token := r.Header.Get("X-APIKEY")
 			fromSupportMenu := r.Header.Get(
 				"FROM-SUPPORT-MENU",
 			)
@@ -37,6 +80,7 @@ func (m *Middleware) Authenticate(
 					"missing authentication headers",
 					http.StatusUnauthorized,
 				)
+
 				return
 			}
 
@@ -56,6 +100,7 @@ func (m *Middleware) Authenticate(
 					"unauthorized",
 					http.StatusUnauthorized,
 				)
+
 				return
 			}
 

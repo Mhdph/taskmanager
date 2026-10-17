@@ -36,6 +36,9 @@ type CreateInput struct {
 	UserID      string
 	Name        string
 	Description *string
+
+	// Optional owning team; nil = none.
+	TeamID *string
 }
 type UpdateMemberRoleInput struct {
 	Identity  auth.Identity
@@ -98,6 +101,7 @@ func (s *Service) Create(
 			Name:            name,
 			Description:     input.Description,
 			CreatedByUserID: input.UserID,
+			TeamID:          input.TeamID,
 		},
 	)
 	if err != nil {

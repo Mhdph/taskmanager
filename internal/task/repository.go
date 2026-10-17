@@ -52,6 +52,12 @@ type CreateParams struct {
 	DueAt *time.Time
 
 	CompletedAt *time.Time
+
+	// Optional estimate (seconds) and recurrence rule; validated by the
+	// service before reaching here.
+	EstimateSeconds *int64
+
+	Recurrence *string
 }
 
 func (r *Repository) Create(
@@ -140,6 +146,24 @@ func (r *Repository) Create(
 		}
 	}
 
+	var estimateSeconds pgtype.Int8
+
+	if params.EstimateSeconds != nil {
+		estimateSeconds = pgtype.Int8{
+			Int64: *params.EstimateSeconds,
+			Valid: true,
+		}
+	}
+
+	var recurrence pgtype.Text
+
+	if params.Recurrence != nil {
+		recurrence = pgtype.Text{
+			String: *params.Recurrence,
+			Valid:  true,
+		}
+	}
+
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return Task{}, fmt.Errorf("begin task creation transaction: %w", err)
@@ -221,6 +245,10 @@ func (r *Repository) Create(
 			CompletedAt: completedAt,
 
 			Position: position,
+
+			EstimateSeconds: estimateSeconds,
+
+			Recurrence: recurrence,
 		},
 	)
 	if err != nil {

@@ -39,6 +39,25 @@ check optional providers or the hosted identity service.
 curl --fail http://localhost:8080/health
 ```
 
+### Local development without the hosted platform
+
+Auth is normally delegated to the hosted platform (`X-APIKEY`/`USER-ID`/`APP-ID`
+resolved over its GraphQL profile endpoint). For local client development the
+API offers a dev identity resolver, disabled by default:
+
+```sh
+IDENTITY_DEV_MODE=true
+```
+
+When set, only `USER-ID` (and optionally `APP-ID`, which doubles as the
+tenant id) are required — no token, no hosted call. The derived identity is an
+admin + support principal, and the tenant member directory still syncs, so a
+fresh database works with the SvelteKit UI out of the box. **Never enable
+`IDENTITY_DEV_MODE` on a deployed instance.** `MINIO_ENDPOINT` may be left
+empty in this mode; attachment endpoints then return an error instead of
+failing startup. But `docker compose` sets `MINIO_ENDPOINT`; unset it there
+explicitly to use this shortcut.
+
 ## Run the API with Go
 
 Requires the Go version in `go.mod`, PostgreSQL 17 and a MinIO instance. Start only

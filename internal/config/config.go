@@ -54,6 +54,12 @@ type DatabaseConfig struct {
 
 type HostedConfig struct {
 	GraphQLEndpoint string
+
+	// DevMode skips the hosted identity call and derives identities from
+	// the USER-ID/APP-ID headers alone (admin role, support flag). Used
+	// for local development of clients (e.g. the SvelteKit UI); never
+	// enable it on a deployed instance.
+	DevMode bool
 }
 
 func Load() (Config, error) {
@@ -90,6 +96,8 @@ func Load() (Config, error) {
 
 		Hosted: HostedConfig{
 			GraphQLEndpoint: graphQLEndpoint,
+
+			DevMode: getEnv("IDENTITY_DEV_MODE", "false") == "true",
 		},
 
 		Notification: NotificationConfig{

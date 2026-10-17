@@ -41,6 +41,9 @@ type createTaskRequest struct {
 
 	StartAt *time.Time `json:"startAt"`
 	DueAt   *time.Time `json:"dueAt"`
+
+	EstimateSeconds *int64  `json:"estimateSeconds"`
+	Recurrence      *string `json:"recurrence"`
 }
 
 type updateTaskRequest struct {
@@ -149,6 +152,9 @@ func (h *Handler) Create(
 
 			StartAt: req.StartAt,
 			DueAt:   req.DueAt,
+
+			EstimateSeconds: req.EstimateSeconds,
+			Recurrence:      req.Recurrence,
 		},
 	)
 	if err != nil {

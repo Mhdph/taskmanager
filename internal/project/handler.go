@@ -24,8 +24,9 @@ func NewHandler(service *Service) *Handler {
 }
 
 type createProjectRequest struct {
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description"`
+	TeamID      json.RawMessage `json:"teamId"`
 }
 
 type updateProjectRequest struct {
@@ -88,6 +89,25 @@ func (h *Handler) Create(
 		return
 	}
 
+	// teamId: absent or null = none; a string must be a UUID the service
+	// validates against the tenant's teams.
+	var teamID *string
+
+	if raw := req.TeamID; len(raw) > 0 && string(raw) != "null" {
+		var teamIDStr string
+
+		if err := json.Unmarshal(raw, &teamIDStr); err != nil {
+			http.Error(
+				w,
+				"teamId must be a string or null",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		teamID = &teamIDStr
+	}
+
 	project, err := h.service.Create(
 		r.Context(),
 		CreateInput{
@@ -95,6 +115,7 @@ func (h *Handler) Create(
 			UserID:      identity.UserID,
 			Name:        req.Name,
 			Description: req.Description,
+			TeamID:      teamID,
 		},
 	)
 	if err != nil {

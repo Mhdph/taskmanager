@@ -19,12 +19,12 @@ import (
 // Label is a workspace-level label that can be attached to tasks from any
 // project of its tenant.
 type Label struct {
-	ID    string
-	Name  string
-	Color string
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
 
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 func labelFromDB(row db.Label) Label {

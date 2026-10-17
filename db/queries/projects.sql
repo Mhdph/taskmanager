@@ -4,14 +4,16 @@ INSERT INTO projects (
     tenant_id,
     name,
     description,
-    created_by_user_id
+    created_by_user_id,
+    team_id
 )
 VALUES (
     $1,
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6
 )
 RETURNING *;
 

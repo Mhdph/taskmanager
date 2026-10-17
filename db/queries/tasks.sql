@@ -13,7 +13,9 @@ INSERT INTO tasks (
     start_at,
     due_at,
     completed_at,
-    position
+    position,
+    estimate_seconds,
+    recurrence
 )
 VALUES (
     sqlc.arg(id),
@@ -29,7 +31,9 @@ VALUES (
     sqlc.narg(start_at),
     sqlc.narg(due_at),
     sqlc.narg(completed_at),
-    sqlc.narg(position)
+    sqlc.narg(position),
+    sqlc.narg(estimate_seconds),
+    sqlc.narg(recurrence)
 )
 RETURNING *;
 -- name: GetTaskForTenant :one

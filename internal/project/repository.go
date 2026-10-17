@@ -34,6 +34,9 @@ type CreateParams struct {
 	Name            string
 	Description     *string
 	CreatedByUserID string
+
+	// Optional owning team; when set it must exist in the tenant.
+	TeamID *string
 }
 
 type UpdateParams struct {
@@ -80,6 +83,46 @@ func (r *Repository) Create(
 		}
 	}
 
+	// Same team validation as Update: the team must exist in the tenant
+	// before it can own the project.
+	var teamID pgtype.UUID
+
+	if params.TeamID != nil {
+		parsedTeam, err := uuid.Parse(*params.TeamID)
+		if err != nil {
+			return Project{}, fmt.Errorf(
+				"%w: %v",
+				ErrTeamNotFound,
+				err,
+			)
+		}
+
+		if _, err := r.queries.GetTeam(
+			ctx,
+			db.GetTeamParams{
+				TenantID: params.TenantID,
+				ID: pgtype.UUID{
+					Bytes: parsedTeam,
+					Valid: true,
+				},
+			},
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Project{}, ErrTeamNotFound
+			}
+
+			return Project{}, fmt.Errorf(
+				"resolve project team: %w",
+				err,
+			)
+		}
+
+		teamID = pgtype.UUID{
+			Bytes: parsedTeam,
+			Valid: true,
+		}
+	}
+
 	row, err := r.queries.CreateProject(
 		ctx,
 		db.CreateProjectParams{
@@ -91,6 +134,7 @@ func (r *Repository) Create(
 			Name:            params.Name,
 			Description:     description,
 			CreatedByUserID: params.CreatedByUserID,
+			TeamID:          teamID,
 		},
 	)
 	if err != nil {
@@ -168,6 +212,45 @@ func (r *Repository) CreateWithDefaultStatuses(
 		}
 	}
 
+	// Team validation mirrors the non-transactional Create.
+	var teamID pgtype.UUID
+
+	if params.TeamID != nil {
+		parsedTeam, err := uuid.Parse(*params.TeamID)
+		if err != nil {
+			return Project{}, fmt.Errorf(
+				"%w: %v",
+				ErrTeamNotFound,
+				err,
+			)
+		}
+
+		if _, err := qtx.GetTeam(
+			ctx,
+			db.GetTeamParams{
+				TenantID: params.TenantID,
+				ID: pgtype.UUID{
+					Bytes: parsedTeam,
+					Valid: true,
+				},
+			},
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Project{}, ErrTeamNotFound
+			}
+
+			return Project{}, fmt.Errorf(
+				"resolve project team: %w",
+				err,
+			)
+		}
+
+		teamID = pgtype.UUID{
+			Bytes: parsedTeam,
+			Valid: true,
+		}
+	}
+
 	row, err := qtx.CreateProject(
 		ctx,
 		db.CreateProjectParams{
@@ -179,6 +262,7 @@ func (r *Repository) CreateWithDefaultStatuses(
 			Name:            params.Name,
 			Description:     description,
 			CreatedByUserID: params.CreatedByUserID,
+			TeamID:          teamID,
 		},
 	)
 	if err != nil {

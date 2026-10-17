@@ -97,6 +97,12 @@ func main() {
 		)
 	}
 
+	if cfg.Storage.Endpoint == "" {
+		log.Printf(
+			"storage disabled: MINIO_ENDPOINT not set (attachment endpoints will fail)",
+		)
+	}
+
 	if cfg.Storage.PublicURL != "" {
 		if err := storageClient.SetPublicURL(cfg.Storage.PublicURL, cfg.Storage.AccessKey, cfg.Storage.SecretKey); err != nil {
 			log.Fatalf("configure public storage URL: %v", err)
@@ -158,6 +164,7 @@ func main() {
 
 	authMiddleware := auth.NewMiddleware(
 		identityResolver,
+		cfg.Hosted.DevMode,
 	)
 
 	// -------------------------------------------------------------------------

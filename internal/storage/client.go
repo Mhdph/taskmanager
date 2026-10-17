@@ -15,7 +15,16 @@ type Client struct {
 	signer *minio.Client
 
 	bucket string
+
+	// disabled marks a client created without a storage endpoint (local
+	// development without MinIO): boot proceeds, attachment operations
+	// return an error instead of crashing the server.
+	disabled bool
 }
+
+// ErrStorageDisabled is returned by attachment operations when the server
+// booted without a storage endpoint.
+var ErrStorageDisabled = fmt.Errorf("storage is disabled (no endpoint configured)")
 
 func NewClient(
 	endpoint string,
@@ -24,6 +33,13 @@ func NewClient(
 	bucket string,
 	useSSL bool,
 ) (*Client, error) {
+	if endpoint == "" {
+		return &Client{
+			bucket:   bucket,
+			disabled: true,
+		}, nil
+	}
+
 	client, err := minio.New(
 		endpoint,
 		&minio.Options{
@@ -53,6 +69,9 @@ func NewClient(
 // Public download URLs may use a different host or TLS scheme than the internal
 // storage connection; signing still uses the same bucket and credentials.
 func (c *Client) SetPublicURL(publicURL, accessKey, secretKey string) error {
+	if c.disabled {
+		return nil
+	}
 	u, err := url.Parse(publicURL)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return fmt.Errorf("invalid MINIO_PUBLIC_URL")
@@ -62,6 +81,9 @@ func (c *Client) SetPublicURL(publicURL, accessKey, secretKey string) error {
 }
 
 func (c *Client) CheckHealth(ctx context.Context) error {
+	if c.disabled {
+		return ErrStorageDisabled
+	}
 	exists, err := c.client.BucketExists(ctx, c.bucket)
 	if err != nil {
 		return err
@@ -75,6 +97,9 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 func (c *Client) EnsureBucket(
 	ctx context.Context,
 ) error {
+	if c.disabled {
+		return nil
+	}
 	exists, err :=
 		c.client.BucketExists(
 			ctx,
@@ -110,6 +135,9 @@ func (c *Client) Upload(
 	ctx context.Context,
 	input UploadInput,
 ) error {
+	if c.disabled {
+		return ErrStorageDisabled
+	}
 	_, err := c.client.PutObject(
 		ctx,
 		c.bucket,
@@ -135,6 +163,9 @@ func (c *Client) Delete(
 	ctx context.Context,
 	objectKey string,
 ) error {
+	if c.disabled {
+		return ErrStorageDisabled
+	}
 	err := c.client.RemoveObject(
 		ctx,
 		c.bucket,
@@ -157,6 +188,9 @@ func (c *Client) PresignedDownloadURL(
 	filename string,
 	expiry time.Duration,
 ) (string, error) {
+	if c.disabled {
+		return "", ErrStorageDisabled
+	}
 	params := make(
 		url.Values,
 	)

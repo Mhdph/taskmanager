@@ -94,6 +94,11 @@ type CreateInput struct {
 
 	StartAt *time.Time
 	DueAt   *time.Time
+
+	// Optional estimate (seconds) and recurrence rule.
+	EstimateSeconds *int64
+
+	Recurrence *string
 }
 
 func (s *Service) Create(
@@ -216,6 +221,25 @@ func (s *Service) Create(
 		}
 	}
 
+	// Estimate and recurrence carry the same rules as update.
+	if input.EstimateSeconds != nil &&
+		(*input.EstimateSeconds <= 0 ||
+			*input.EstimateSeconds > maxEstimateSeconds) {
+		return Task{},
+			ErrInvalidEstimate
+	}
+
+	if input.Recurrence != nil && *input.Recurrence != "" {
+
+		switch *input.Recurrence {
+		case "daily", "weekly", "biweekly", "monthly":
+
+		default:
+			return Task{},
+				ErrInvalidRecurrence
+		}
+	}
+
 	task, err := s.repository.Create(
 		ctx,
 		CreateParams{
@@ -240,6 +264,10 @@ func (s *Service) Create(
 			StartAt:     input.StartAt,
 			DueAt:       input.DueAt,
 			CompletedAt: completedAt,
+
+			EstimateSeconds: input.EstimateSeconds,
+
+			Recurrence: input.Recurrence,
 		},
 	)
 	if err != nil {
