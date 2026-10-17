@@ -184,6 +184,11 @@ UPDATE projects
             THEN sqlc.narg(description)::text
             ELSE description
         END,
+        team_id = CASE
+            WHEN sqlc.arg(update_team)::boolean
+            THEN sqlc.narg(team_id)::uuid
+            ELSE team_id
+        END,
         updated_at = NOW()
     WHERE
         tenant_id = sqlc.arg(tenant_id)

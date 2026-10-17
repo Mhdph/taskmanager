@@ -10,6 +10,7 @@ var (
 	ErrInvalidCursor     = errors.New("invalid cursor")
 	ErrInvalidName       = errors.New("invalid project name")
 	ErrNoChanges         = errors.New("no changes provided")
+	ErrTeamNotFound      = errors.New("team not found")
 	ErrForbidden         = errors.New("forbidden")
 	ErrInvalidMember     = errors.New("invalid project member")
 	ErrInvalidMemberRole = errors.New("invalid project member role")

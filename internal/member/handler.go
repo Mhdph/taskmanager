@@ -36,6 +36,8 @@ type memberResponse struct {
 	Title  string `json:"title"`
 	Status string `json:"status"`
 
+	TeamID *string `json:"teamId,omitempty"`
+
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
@@ -63,6 +65,8 @@ func toMemberResponse(member Member) memberResponse {
 		Role:   string(member.Role),
 		Title:  member.Title,
 		Status: string(member.Status),
+
+		TeamID: member.TeamID,
 
 		CreatedAt: formatTime(member.CreatedAt),
 		UpdatedAt: formatTime(member.UpdatedAt),

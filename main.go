@@ -29,6 +29,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/search"
 	"github.com/mhdph/taskmanager/internal/storage"
 	"github.com/mhdph/taskmanager/internal/task"
+	"github.com/mhdph/taskmanager/internal/team"
 	"github.com/mhdph/taskmanager/internal/view"
 )
 
@@ -174,6 +175,20 @@ func main() {
 
 	memberHandler := member.NewHandler(
 		memberService,
+	)
+
+	// -------------------------------------------------------------------------
+	// Teams module
+	// -------------------------------------------------------------------------
+
+	teamHandler := team.NewHandler(
+		team.NewService(
+			team.NewRepository(
+				pool,
+				queries,
+			),
+			memberRepository,
+		),
 	)
 
 	// Keep the tenant member directory in sync with hosted identities. Runs
@@ -530,7 +545,6 @@ func main() {
 			r.Use(
 				authMiddleware.Authenticate,
 			)
-
 			r.Get(
 				"/",
 				memberHandler.List,
@@ -549,6 +563,56 @@ func main() {
 			r.Delete(
 				"/{userID}",
 				memberHandler.Remove,
+			)
+		},
+	)
+
+	// Teams (workspace directory of groups)
+	router.Route(
+		"/teams",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				teamHandler.List,
+			)
+
+			r.Post(
+				"/",
+				teamHandler.Create,
+			)
+
+			r.Route(
+				"/{teamID}",
+				func(r chi.Router) {
+					r.Get(
+						"/",
+						teamHandler.Get,
+					)
+
+					r.Patch(
+						"/",
+						teamHandler.Update,
+					)
+
+					r.Delete(
+						"/",
+						teamHandler.Delete,
+					)
+
+					r.Get(
+						"/members",
+						teamHandler.ListMembers,
+					)
+
+					r.Put(
+						"/members",
+						teamHandler.SetMembers,
+					)
+				},
 			)
 		},
 	)

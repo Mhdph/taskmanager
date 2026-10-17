@@ -12,6 +12,9 @@ type Member struct {
 	Title     string
 	Status    Status
 
+	// TeamID is the member's primary team; nil when no team.
+	TeamID *string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

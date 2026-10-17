@@ -47,7 +47,7 @@ func (q *Queries) DeleteTenantMember(ctx context.Context, arg DeleteTenantMember
 }
 
 const getTenantMember = `-- name: GetTenantMember :one
-SELECT tenant_id, user_id, email, first_name, last_name, role, title, status, created_at, updated_at
+SELECT tenant_id, user_id, email, first_name, last_name, role, title, status, created_at, updated_at, team_id
 FROM tenant_members
 WHERE
     tenant_id = $1
@@ -73,12 +73,13 @@ func (q *Queries) GetTenantMember(ctx context.Context, arg GetTenantMemberParams
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const listTenantMembers = `-- name: ListTenantMembers :many
-SELECT tenant_id, user_id, email, first_name, last_name, role, title, status, created_at, updated_at
+SELECT tenant_id, user_id, email, first_name, last_name, role, title, status, created_at, updated_at, team_id
 FROM tenant_members
 WHERE
     tenant_id = $1
@@ -136,6 +137,7 @@ func (q *Queries) ListTenantMembers(ctx context.Context, arg ListTenantMembersPa
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}

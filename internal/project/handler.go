@@ -31,6 +31,7 @@ type createProjectRequest struct {
 type updateProjectRequest struct {
 	Name        *string         `json:"name"`
 	Description json.RawMessage `json:"description"`
+	TeamID      json.RawMessage `json:"teamId"`
 }
 
 type listProjectsResponse struct {
@@ -54,6 +55,8 @@ type projectResponse struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
 	Description *string    `json:"description"`
+
+	TeamID *string `json:"teamId,omitempty"`
 
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
@@ -113,6 +116,9 @@ func (h *Handler) Create(
 		ID:          project.ID,
 		Name:        project.Name,
 		Description: project.Description,
+
+		TeamID: project.TeamID,
+
 		CreatedAt: project.CreatedAt.
 			UTC().
 			Format("2006-01-02T15:04:05Z07:00"),
@@ -337,6 +343,9 @@ func toProjectResponse(project Project) projectResponse {
 		ID:          project.ID,
 		Name:        project.Name,
 		Description: project.Description,
+
+		TeamID: project.TeamID,
+
 		CreatedAt: project.CreatedAt.
 			UTC().
 			Format(time.RFC3339),
@@ -401,6 +410,31 @@ func (h *Handler) Update(
 		}
 	}
 
+	var teamID *string
+	updateTeam := false
+
+	if req.TeamID != nil {
+		updateTeam = true
+
+		if string(req.TeamID) != "null" {
+			var value string
+
+			if err := json.Unmarshal(
+				req.TeamID,
+				&value,
+			); err != nil {
+				http.Error(
+					w,
+					"teamId must be string or null",
+					http.StatusBadRequest,
+				)
+				return
+			}
+
+			teamID = &value
+		}
+	}
+
 	updated, err := h.service.Update(
 		r.Context(),
 		UpdateInput{
@@ -411,6 +445,9 @@ func (h *Handler) Update(
 
 			UpdateDescription: updateDescription,
 			Description:       description,
+
+			UpdateTeam: updateTeam,
+			TeamID:     teamID,
 		},
 	)
 	if err != nil {
@@ -426,6 +463,13 @@ func (h *Handler) Update(
 			http.Error(
 				w,
 				"invalid project name",
+				http.StatusBadRequest,
+			)
+
+		case errors.Is(err, ErrTeamNotFound):
+			http.Error(
+				w,
+				"team not found",
 				http.StatusBadRequest,
 			)
 

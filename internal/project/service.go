@@ -60,6 +60,10 @@ type UpdateInput struct {
 
 	UpdateDescription bool
 	Description       *string
+
+	// UpdateTeam replaces the owning team (nil clears the link).
+	UpdateTeam bool
+	TeamID     *string
 }
 
 type ListInput struct {
@@ -261,7 +265,7 @@ func (s *Service) Update(
 		name = &value
 	}
 
-	if input.Name == nil && !input.UpdateDescription {
+	if input.Name == nil && !input.UpdateDescription && !input.UpdateTeam {
 		return Project{}, ErrNoChanges
 	}
 
@@ -276,6 +280,9 @@ func (s *Service) Update(
 
 			UpdateDescription: input.UpdateDescription,
 			Description:       input.Description,
+
+			UpdateTeam: input.UpdateTeam,
+			TeamID:     input.TeamID,
 		},
 	)
 	if err != nil {

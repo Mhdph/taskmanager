@@ -44,6 +44,11 @@ type UpdateParams struct {
 
 	UpdateDescription bool
 	Description       *string
+
+	// UpdateTeam replaces the owning team (nil clears the link) when
+	// set; nil means leave the link untouched.
+	UpdateTeam bool
+	TeamID     *string
 }
 
 type AddMemberParams struct {
@@ -114,6 +119,11 @@ func projectFromDB(row db.Project) Project {
 	if row.Description.Valid {
 		description := row.Description.String
 		project.Description = &description
+	}
+
+	if row.TeamID.Valid {
+		teamID := uuid.UUID(row.TeamID.Bytes).String()
+		project.TeamID = &teamID
 	}
 
 	if row.ArchivedAt.Valid {
@@ -540,6 +550,47 @@ func (r *Repository) Update(
 		}
 	}
 
+	// A non-nil team id must exist in the tenant; validation happens on the
+	// shared queries facade (no cross-package dependency needed).
+	var teamID pgtype.UUID
+
+	if params.TeamID != nil {
+		parsed, err := uuid.Parse(*params.TeamID)
+		if err != nil {
+			return Project{}, fmt.Errorf(
+				"%w: %v",
+				ErrTeamNotFound,
+				err,
+			)
+		}
+
+		if _, err := r.queries.GetTeam(
+			ctx,
+			db.GetTeamParams{
+				TenantID: params.TenantID,
+
+				ID: pgtype.UUID{
+					Bytes: parsed,
+					Valid: true,
+				},
+			},
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Project{}, ErrTeamNotFound
+			}
+
+			return Project{}, fmt.Errorf(
+				"resolve project team: %w",
+				err,
+			)
+		}
+
+		teamID = pgtype.UUID{
+			Bytes: parsed,
+			Valid: true,
+		}
+	}
+
 	row, err := r.queries.UpdateProject(
 		ctx,
 		db.UpdateProjectParams{
@@ -547,6 +598,9 @@ func (r *Repository) Update(
 
 			UpdateDescription: params.UpdateDescription,
 			Description:       description,
+
+			UpdateTeam: params.UpdateTeam,
+			TeamID:     teamID,
 
 			TenantID: params.TenantID,
 

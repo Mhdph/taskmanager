@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -394,7 +395,7 @@ func (r *Repository) Delete(
 func memberFromDB(
 	row db.TenantMember,
 ) Member {
-	return Member{
+	member := Member{
 		TenantID:  row.TenantID,
 		UserID:    row.UserID,
 		Email:     row.Email,
@@ -407,6 +408,13 @@ func memberFromDB(
 		CreatedAt: row.CreatedAt.Time,
 		UpdatedAt: row.UpdatedAt.Time,
 	}
+
+	if row.TeamID.Valid {
+		value := uuid.UUID(row.TeamID.Bytes).String()
+		member.TeamID = &value
+	}
+
+	return member
 }
 
 // guardLastOwner rejects demoting or removing the last workspace owner.

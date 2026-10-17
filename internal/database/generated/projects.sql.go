@@ -111,7 +111,7 @@ VALUES (
     $4,
     $5
 )
-RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 `
 
 type CreateProjectParams struct {
@@ -140,6 +140,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -240,7 +241,7 @@ func (q *Queries) DeleteProjectStatus(ctx context.Context, arg DeleteProjectStat
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 FROM projects
 WHERE
     tenant_id = $1
@@ -265,12 +266,13 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const getProjectForTenant = `-- name: GetProjectForTenant :one
-SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 FROM projects
 WHERE
     tenant_id = $1
@@ -295,12 +297,13 @@ func (q *Queries) GetProjectForTenant(ctx context.Context, arg GetProjectForTena
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const getProjectForUser = `-- name: GetProjectForUser :one
-SELECT p.id, p.tenant_id, p.name, p.description, p.created_by_user_id, p.created_at, p.updated_at, p.archived_at
+SELECT p.id, p.tenant_id, p.name, p.description, p.created_by_user_id, p.created_at, p.updated_at, p.archived_at, p.team_id
 FROM projects p
 JOIN project_members pm
     ON pm.project_id = p.id
@@ -330,6 +333,7 @@ func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -547,7 +551,7 @@ func (q *Queries) ListProjectTasksForAI(ctx context.Context, arg ListProjectTask
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 FROM projects
 WHERE
     tenant_id = $1
@@ -573,6 +577,7 @@ func (q *Queries) ListProjects(ctx context.Context, tenantID string) ([]Project,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -585,7 +590,7 @@ func (q *Queries) ListProjects(ctx context.Context, tenantID string) ([]Project,
 }
 
 const listProjectsForTenant = `-- name: ListProjectsForTenant :many
-SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+SELECT id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 FROM projects
 WHERE
     tenant_id = $1
@@ -635,6 +640,7 @@ func (q *Queries) ListProjectsForTenant(ctx context.Context, arg ListProjectsFor
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -647,7 +653,7 @@ func (q *Queries) ListProjectsForTenant(ctx context.Context, arg ListProjectsFor
 }
 
 const listProjectsForUser = `-- name: ListProjectsForUser :many
-SELECT p.id, p.tenant_id, p.name, p.description, p.created_by_user_id, p.created_at, p.updated_at, p.archived_at
+SELECT p.id, p.tenant_id, p.name, p.description, p.created_by_user_id, p.created_at, p.updated_at, p.archived_at, p.team_id
 FROM projects p
 JOIN project_members pm
     ON pm.project_id = p.id
@@ -703,6 +709,7 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUs
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ArchivedAt,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -811,7 +818,7 @@ func (q *Queries) ProjectStatusHasTasks(ctx context.Context, arg ProjectStatusHa
 const restoreProject = `-- name: RestoreProject :one
 UPDATE projects SET archived_at = NULL, updated_at = NOW()
 WHERE tenant_id = $1 AND id = $2 AND archived_at IS NOT NULL
-RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 `
 
 type RestoreProjectParams struct {
@@ -831,6 +838,7 @@ func (q *Queries) RestoreProject(ctx context.Context, arg RestoreProjectParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -847,18 +855,25 @@ UPDATE projects
             THEN $3::text
             ELSE description
         END,
+        team_id = CASE
+            WHEN $4::boolean
+            THEN $5::uuid
+            ELSE team_id
+        END,
         updated_at = NOW()
     WHERE
-        tenant_id = $4
-        AND id = $5
+        tenant_id = $6
+        AND id = $7
         AND archived_at IS NULL
-    RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at
+    RETURNING id, tenant_id, name, description, created_by_user_id, created_at, updated_at, archived_at, team_id
 `
 
 type UpdateProjectParams struct {
 	Name              pgtype.Text
 	UpdateDescription bool
 	Description       pgtype.Text
+	UpdateTeam        bool
+	TeamID            pgtype.UUID
 	TenantID          string
 	ID                pgtype.UUID
 }
@@ -868,6 +883,8 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		arg.Name,
 		arg.UpdateDescription,
 		arg.Description,
+		arg.UpdateTeam,
+		arg.TeamID,
 		arg.TenantID,
 		arg.ID,
 	)
@@ -881,6 +898,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
+		&i.TeamID,
 	)
 	return i, err
 }

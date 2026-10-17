@@ -9,6 +9,9 @@ type Project struct {
 	Description     *string
 	CreatedByUserID string
 
+	// TeamID is the owning workspace team; nil when unassigned.
+	TeamID *string
+
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	ArchivedAt *time.Time

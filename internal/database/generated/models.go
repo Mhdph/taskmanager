@@ -54,6 +54,7 @@ type Project struct {
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	ArchivedAt      pgtype.Timestamptz
+	TeamID          pgtype.UUID
 }
 
 type ProjectMember struct {
@@ -178,6 +179,18 @@ type TaskWatcher struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Team struct {
+	ID              pgtype.UUID
+	TenantID        string
+	Name            string
+	Icon            string
+	Color           string
+	Description     string
+	CreatedByUserID string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type TenantMember struct {
 	TenantID  string
 	UserID    string
@@ -189,4 +202,5 @@ type TenantMember struct {
 	Status    string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	TeamID    pgtype.UUID
 }
