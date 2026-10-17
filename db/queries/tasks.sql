@@ -12,7 +12,8 @@ INSERT INTO tasks (
     created_by_user_id,
     start_at,
     due_at,
-    completed_at
+    completed_at,
+    position
 )
 VALUES (
     sqlc.arg(id),
@@ -27,7 +28,8 @@ VALUES (
     sqlc.arg(created_by_user_id),
     sqlc.narg(start_at),
     sqlc.narg(due_at),
-    sqlc.narg(completed_at)
+    sqlc.narg(completed_at),
+    sqlc.narg(position)
 )
 RETURNING *;
 -- name: GetTaskForTenant :one
@@ -151,6 +153,18 @@ WHERE
             WHEN sqlc.arg(update_completed_at)::boolean
             THEN sqlc.narg(completed_at)::timestamptz
             ELSE completed_at
+        END,
+
+        estimate_seconds = CASE
+            WHEN sqlc.arg(update_estimate)::boolean
+            THEN sqlc.narg(estimate_seconds)::bigint
+            ELSE estimate_seconds
+        END,
+
+        recurrence = CASE
+            WHEN sqlc.arg(update_recurrence)::boolean
+            THEN sqlc.narg(recurrence)::text
+            ELSE recurrence
         END,
 
         start_at = CASE
@@ -452,3 +466,29 @@ UPDATE tasks t SET archived_at = NULL, updated_at = NOW()
 WHERE t.tenant_id = $1 AND t.project_id = $2 AND t.id = $3 AND t.archived_at IS NOT NULL
     AND EXISTS (SELECT 1 FROM projects p WHERE p.tenant_id = t.tenant_id AND p.id = t.project_id AND p.archived_at IS NULL)
 RETURNING t.*;
+
+-- name: GetTaskMaxPosition :one
+SELECT COALESCE(MAX(position), 0)::float8
+FROM tasks
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND status_id = $3
+    AND archived_at IS NULL;
+
+-- name: UpdateTaskPosition :execrows
+UPDATE tasks
+SET
+    position = $4
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3
+    AND archived_at IS NULL;
+
+-- name: LockProjectForTaskReorder :one
+SELECT id
+FROM projects
+WHERE tenant_id = $1
+    AND id = $2
+FOR UPDATE;

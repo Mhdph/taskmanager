@@ -492,6 +492,20 @@ func (s *Service) Get(
 		)
 	}
 
+	labels, err := s.repository.ListTaskLabels(
+		ctx,
+		identity.TenantID,
+		item.ID,
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"get task labels: %w",
+			err,
+		)
+	}
+
+	item.Labels = labels
+
 	return item, nil
 }
 
@@ -520,7 +534,21 @@ type UpdateInput struct {
 
 	UpdateDueAt bool
 	DueAt       *time.Time
+
+	// Estimate in seconds; UpdateEstimate enables clearing via nil.
+	UpdateEstimate  bool
+	EstimateSeconds *int64
+
+	UpdateRecurrence bool
+	Recurrence       *string
 }
+
+// taskPositionGap is the default spacing between board positions, leaving
+// cheap room for fractional insertions between existing tasks.
+const taskPositionGap = 1024
+
+// maxEstimateSeconds caps estimates at ten years of work.
+const maxEstimateSeconds = 315_360_000
 
 func completedAtForStatusChange(current *time.Time, statusChanged bool, category project.StatusCategory, now time.Time) (bool, *time.Time) {
 	if !statusChanged {
@@ -635,6 +663,28 @@ func (s *Service) Update(
 				ErrInvalidPriority
 		}
 	}
+
+	if input.UpdateEstimate {
+		if input.EstimateSeconds != nil &&
+			(*input.EstimateSeconds < 0 ||
+				*input.EstimateSeconds > maxEstimateSeconds) {
+
+			return Task{},
+				ErrInvalidEstimate
+		}
+	}
+
+	if input.UpdateRecurrence &&
+		input.Recurrence != nil {
+
+		switch *input.Recurrence {
+		case "daily", "weekly", "biweekly", "monthly":
+
+		default:
+			return Task{},
+				ErrInvalidRecurrence
+		}
+	}
 	var updateCompletedAt bool
 	var completedAt *time.Time
 	var previousStatus *project.ProjectStatus
@@ -743,6 +793,12 @@ func (s *Service) Update(
 			UpdateDueAt: input.UpdateDueAt,
 			DueAt:       input.DueAt,
 
+			UpdateEstimate:  input.UpdateEstimate,
+			EstimateSeconds: input.EstimateSeconds,
+
+			UpdateRecurrence: input.UpdateRecurrence,
+			Recurrence:       input.Recurrence,
+
 			UpdateCompletedAt: updateCompletedAt,
 			CompletedAt:       completedAt,
 		},
@@ -778,6 +834,12 @@ func (s *Service) Update(
 	}
 	if input.UpdateDueAt {
 		changedFields = append(changedFields, "due_at")
+	}
+	if input.UpdateEstimate {
+		changedFields = append(changedFields, "estimate_seconds")
+	}
+	if input.UpdateRecurrence {
+		changedFields = append(changedFields, "recurrence")
 	}
 
 	if len(changedFields) > 0 {

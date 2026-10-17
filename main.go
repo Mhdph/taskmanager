@@ -21,6 +21,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/config"
 	"github.com/mhdph/taskmanager/internal/dashboard"
 	database "github.com/mhdph/taskmanager/internal/database/generated"
+	"github.com/mhdph/taskmanager/internal/favorite"
 	"github.com/mhdph/taskmanager/internal/hosted"
 	"github.com/mhdph/taskmanager/internal/member"
 	"github.com/mhdph/taskmanager/internal/notification"
@@ -233,6 +234,26 @@ func main() {
 	)
 
 	// -------------------------------------------------------------------------
+	// Favorites module
+	// -------------------------------------------------------------------------
+
+	favoriteRepository := favorite.NewRepository(
+		pool,
+		queries,
+	)
+
+	favoriteService := favorite.NewService(
+		favoriteRepository,
+		taskRepository,
+		projectRepository,
+		projectAuthorizer,
+	)
+
+	favoriteHandler := favorite.NewHandler(
+		favoriteService,
+	)
+
+	// -------------------------------------------------------------------------
 	// Comment module
 	// -------------------------------------------------------------------------
 
@@ -385,6 +406,71 @@ func main() {
 		},
 	)
 
+	// Favorites (personal bookmarks over tasks and projects)
+	router.Route(
+		"/favorites",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				favoriteHandler.Get,
+			)
+
+			r.Put(
+				"/tasks/{taskID}",
+				favoriteHandler.AddTask,
+			)
+
+			r.Delete(
+				"/tasks/{taskID}",
+				favoriteHandler.RemoveTask,
+			)
+
+			r.Put(
+				"/projects/{projectID}",
+				favoriteHandler.AddProject,
+			)
+
+			r.Delete(
+				"/projects/{projectID}",
+				favoriteHandler.RemoveProject,
+			)
+		},
+	)
+
+	// Labels (workspace label directory)
+	router.Route(
+		"/labels",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				taskHandler.ListLabels,
+			)
+
+			r.Post(
+				"/",
+				taskHandler.CreateLabel,
+			)
+
+			r.Patch(
+				"/{labelID}",
+				taskHandler.UpdateLabel,
+			)
+
+			r.Delete(
+				"/{labelID}",
+				taskHandler.DeleteLabel,
+			)
+		},
+	)
+
 	// Members (workspace directory)
 	router.Route(
 		"/members",
@@ -465,12 +551,19 @@ func main() {
 			r.Route("/tasks", func(r chi.Router) {
 				r.Post("/", taskHandler.Create)
 				r.Get("/", taskHandler.List)
+				r.Put("/reorder", taskHandler.Reorder)
 
 				r.Route("/{taskID}", func(r chi.Router) {
 					r.Get("/", taskHandler.Get)
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
 					r.Post("/restore", taskHandler.Restore)
+
+					r.Route("/labels", func(r chi.Router) {
+						r.Get("/", taskHandler.GetTaskLabels)
+						r.Put("/", taskHandler.SetTaskLabels)
+					})
+
 					r.Route("/time-entries", func(r chi.Router) {
 						r.Get("/", taskHandler.ListTimeEntries)
 						r.Post("/start", taskHandler.StartTimer)

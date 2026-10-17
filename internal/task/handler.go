@@ -58,6 +58,9 @@ type updateTaskRequest struct {
 
 	StartAt json.RawMessage `json:"startAt"`
 	DueAt   json.RawMessage `json:"dueAt"`
+
+	EstimateSeconds *int64  `json:"estimateSeconds"`
+	Recurrence      *string `json:"recurrence"`
 }
 
 type taskResponse struct {
@@ -77,6 +80,12 @@ type taskResponse struct {
 	StartAt        *time.Time `json:"startAt"`
 	DueAt          *time.Time `json:"dueAt"`
 	CompletedAt    *time.Time `json:"completedAt"`
+
+	Position        *float64 `json:"position,omitempty"`
+	EstimateSeconds *int64   `json:"estimateSeconds,omitempty"`
+	Recurrence      *string  `json:"recurrence,omitempty"`
+
+	Labels []Label `json:"labels,omitempty"`
 
 	CreatedByUserID string `json:"createdByUserId"`
 
@@ -625,6 +634,11 @@ func (h *Handler) Update(
 
 			UpdateDueAt: updateDueAt,
 			DueAt:       dueAt,
+
+			UpdateEstimate:   req.EstimateSeconds != nil,
+			EstimateSeconds:  req.EstimateSeconds,
+			UpdateRecurrence: req.Recurrence != nil,
+			Recurrence:       req.Recurrence,
 		},
 	)
 	if err != nil {
@@ -640,6 +654,8 @@ func (h *Handler) Update(
 			errors.Is(err, ErrInvalidTitle),
 			errors.Is(err, ErrInvalidPriority),
 			errors.Is(err, ErrInvalidParentTask),
+			errors.Is(err, ErrInvalidEstimate),
+			errors.Is(err, ErrInvalidRecurrence),
 			errors.Is(err, ErrNoChanges):
 
 			http.Error(
@@ -735,6 +751,12 @@ func toTaskResponse(
 
 		DueAt:       task.DueAt,
 		CompletedAt: task.CompletedAt,
+
+		Position:        task.Position,
+		EstimateSeconds: task.EstimateSeconds,
+		Recurrence:      task.Recurrence,
+
+		Labels: task.Labels,
 
 		CreatedByUserID: task.CreatedByUserID,
 

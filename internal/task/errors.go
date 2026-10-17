@@ -87,4 +87,32 @@ var (
 	ErrBulkTooLarge = errors.New(
 		"cannot update that many tasks at once",
 	)
+
+	ErrLabelNotFound = errors.New(
+		"label not found",
+	)
+
+	ErrLabelNameRequired = errors.New(
+		"label name is required",
+	)
+
+	ErrLabelInvalidColor = errors.New(
+		"invalid label color",
+	)
+
+	ErrInvalidEstimate = errors.New(
+		"invalid estimate",
+	)
+
+	ErrInvalidRecurrence = errors.New(
+		"invalid recurrence rule",
+	)
+
+	ErrForbidden = errors.New(
+		"forbidden",
+	)
+
+	errLabelConflict = errors.New(
+		"label already exists",
+	)
 )

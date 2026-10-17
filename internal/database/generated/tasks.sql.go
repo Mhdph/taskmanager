@@ -133,7 +133,8 @@ INSERT INTO tasks (
     created_by_user_id,
     start_at,
     due_at,
-    completed_at
+    completed_at,
+    position
 )
 VALUES (
     $1,
@@ -148,9 +149,10 @@ VALUES (
     $10,
     $11,
     $12,
-    $13
+    $13,
+    $14
 )
-RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
+RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at, position, estimate_seconds, recurrence
 `
 
 type CreateTaskParams struct {
@@ -167,6 +169,7 @@ type CreateTaskParams struct {
 	StartAt         pgtype.Timestamptz
 	DueAt           pgtype.Timestamptz
 	CompletedAt     pgtype.Timestamptz
+	Position        pgtype.Float8
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error) {
@@ -184,6 +187,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		arg.StartAt,
 		arg.DueAt,
 		arg.CompletedAt,
+		arg.Position,
 	)
 	var i Task
 	err := row.Scan(
@@ -203,6 +207,9 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.UpdatedAt,
 		&i.ArchivedAt,
 		&i.StartAt,
+		&i.Position,
+		&i.EstimateSeconds,
+		&i.Recurrence,
 	)
 	return i, err
 }
@@ -407,7 +414,7 @@ func (q *Queries) GetTaskAttachment(ctx context.Context, arg GetTaskAttachmentPa
 }
 
 const getTaskForProject = `-- name: GetTaskForProject :one
-SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at, position, estimate_seconds, recurrence
 FROM tasks
 WHERE
     tenant_id = $1
@@ -442,12 +449,15 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 		&i.UpdatedAt,
 		&i.ArchivedAt,
 		&i.StartAt,
+		&i.Position,
+		&i.EstimateSeconds,
+		&i.Recurrence,
 	)
 	return i, err
 }
 
 const getTaskForTenant = `-- name: GetTaskForTenant :one
-SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at, position, estimate_seconds, recurrence
 FROM tasks t
 WHERE
     t.tenant_id = $1
@@ -480,12 +490,38 @@ func (q *Queries) GetTaskForTenant(ctx context.Context, arg GetTaskForTenantPara
 		&i.UpdatedAt,
 		&i.ArchivedAt,
 		&i.StartAt,
+		&i.Position,
+		&i.EstimateSeconds,
+		&i.Recurrence,
 	)
 	return i, err
 }
 
+const getTaskMaxPosition = `-- name: GetTaskMaxPosition :one
+SELECT COALESCE(MAX(position), 0)::float8
+FROM tasks
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND status_id = $3
+    AND archived_at IS NULL
+`
+
+type GetTaskMaxPositionParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	StatusID  pgtype.UUID
+}
+
+func (q *Queries) GetTaskMaxPosition(ctx context.Context, arg GetTaskMaxPositionParams) (float64, error) {
+	row := q.db.QueryRow(ctx, getTaskMaxPosition, arg.TenantID, arg.ProjectID, arg.StatusID)
+	var column_1 float64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listMyWorkTasks = `-- name: ListMyWorkTasks :many
-SELECT t.id, t.tenant_id, t.project_id, t.status_id, t.parent_task_id, t.title, t.description, t.priority, t.assignee_user_id, t.created_by_user_id, t.due_at, t.completed_at, t.created_at, t.updated_at, t.archived_at, t.start_at
+SELECT t.id, t.tenant_id, t.project_id, t.status_id, t.parent_task_id, t.title, t.description, t.priority, t.assignee_user_id, t.created_by_user_id, t.due_at, t.completed_at, t.created_at, t.updated_at, t.archived_at, t.start_at, t.position, t.estimate_seconds, t.recurrence
 FROM tasks t
 WHERE
     t.tenant_id = $1
@@ -610,6 +646,9 @@ func (q *Queries) ListMyWorkTasks(ctx context.Context, arg ListMyWorkTasksParams
 			&i.UpdatedAt,
 			&i.ArchivedAt,
 			&i.StartAt,
+			&i.Position,
+			&i.EstimateSeconds,
+			&i.Recurrence,
 		); err != nil {
 			return nil, err
 		}
@@ -755,7 +794,7 @@ func (q *Queries) ListTaskWatchers(ctx context.Context, arg ListTaskWatchersPara
 }
 
 const listTasksForProject = `-- name: ListTasksForProject :many
-SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at, position, estimate_seconds, recurrence
 FROM tasks
 WHERE
     tenant_id = $1
@@ -857,6 +896,9 @@ func (q *Queries) ListTasksForProject(ctx context.Context, arg ListTasksForProje
 			&i.UpdatedAt,
 			&i.ArchivedAt,
 			&i.StartAt,
+			&i.Position,
+			&i.EstimateSeconds,
+			&i.Recurrence,
 		); err != nil {
 			return nil, err
 		}
@@ -877,8 +919,28 @@ func (q *Queries) LockDependencyGraph(ctx context.Context, lockKey string) error
 	return err
 }
 
+const lockProjectForTaskReorder = `-- name: LockProjectForTaskReorder :one
+SELECT id
+FROM projects
+WHERE tenant_id = $1
+    AND id = $2
+FOR UPDATE
+`
+
+type LockProjectForTaskReorderParams struct {
+	TenantID string
+	ID       pgtype.UUID
+}
+
+func (q *Queries) LockProjectForTaskReorder(ctx context.Context, arg LockProjectForTaskReorderParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockProjectForTaskReorder, arg.TenantID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockTaskForUpdate = `-- name: LockTaskForUpdate :one
-SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at FROM tasks
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at, position, estimate_seconds, recurrence FROM tasks
 WHERE tenant_id = $1 AND project_id = $2 AND id = $3
     AND archived_at IS NULL
 FOR UPDATE
@@ -910,6 +972,9 @@ func (q *Queries) LockTaskForUpdate(ctx context.Context, arg LockTaskForUpdatePa
 		&i.UpdatedAt,
 		&i.ArchivedAt,
 		&i.StartAt,
+		&i.Position,
+		&i.EstimateSeconds,
+		&i.Recurrence,
 	)
 	return i, err
 }
@@ -927,7 +992,7 @@ const restoreTask = `-- name: RestoreTask :one
 UPDATE tasks t SET archived_at = NULL, updated_at = NOW()
 WHERE t.tenant_id = $1 AND t.project_id = $2 AND t.id = $3 AND t.archived_at IS NOT NULL
     AND EXISTS (SELECT 1 FROM projects p WHERE p.tenant_id = t.tenant_id AND p.id = t.project_id AND p.archived_at IS NULL)
-RETURNING t.id, t.tenant_id, t.project_id, t.status_id, t.parent_task_id, t.title, t.description, t.priority, t.assignee_user_id, t.created_by_user_id, t.due_at, t.completed_at, t.created_at, t.updated_at, t.archived_at, t.start_at
+RETURNING t.id, t.tenant_id, t.project_id, t.status_id, t.parent_task_id, t.title, t.description, t.priority, t.assignee_user_id, t.created_by_user_id, t.due_at, t.completed_at, t.created_at, t.updated_at, t.archived_at, t.start_at, t.position, t.estimate_seconds, t.recurrence
 `
 
 type RestoreTaskParams struct {
@@ -956,6 +1021,9 @@ func (q *Queries) RestoreTask(ctx context.Context, arg RestoreTaskParams) (Task,
 		&i.UpdatedAt,
 		&i.ArchivedAt,
 		&i.StartAt,
+		&i.Position,
+		&i.EstimateSeconds,
+		&i.Recurrence,
 	)
 	return i, err
 }
@@ -1126,21 +1194,33 @@ const updateTask = `-- name: UpdateTask :one
             ELSE completed_at
         END,
 
-        start_at = CASE
+        estimate_seconds = CASE
             WHEN $14::boolean
-            THEN $15::timestamptz
+            THEN $15::bigint
+            ELSE estimate_seconds
+        END,
+
+        recurrence = CASE
+            WHEN $16::boolean
+            THEN $17::text
+            ELSE recurrence
+        END,
+
+        start_at = CASE
+            WHEN $18::boolean
+            THEN $19::timestamptz
             ELSE start_at
         END,
 
         updated_at = NOW()
 
     WHERE
-        tenant_id = $16
-        AND project_id = $17
-        AND id = $18
+        tenant_id = $20
+        AND project_id = $21
+        AND id = $22
         AND archived_at IS NULL
 
-    RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
+    RETURNING id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at, position, estimate_seconds, recurrence
 `
 
 type UpdateTaskParams struct {
@@ -1157,6 +1237,10 @@ type UpdateTaskParams struct {
 	DueAt             pgtype.Timestamptz
 	UpdateCompletedAt bool
 	CompletedAt       pgtype.Timestamptz
+	UpdateEstimate    bool
+	EstimateSeconds   pgtype.Int8
+	UpdateRecurrence  bool
+	Recurrence        pgtype.Text
 	UpdateStartAt     bool
 	StartAt           pgtype.Timestamptz
 	TenantID          string
@@ -1179,6 +1263,10 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		arg.DueAt,
 		arg.UpdateCompletedAt,
 		arg.CompletedAt,
+		arg.UpdateEstimate,
+		arg.EstimateSeconds,
+		arg.UpdateRecurrence,
+		arg.Recurrence,
 		arg.UpdateStartAt,
 		arg.StartAt,
 		arg.TenantID,
@@ -1203,6 +1291,40 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		&i.UpdatedAt,
 		&i.ArchivedAt,
 		&i.StartAt,
+		&i.Position,
+		&i.EstimateSeconds,
+		&i.Recurrence,
 	)
 	return i, err
+}
+
+const updateTaskPosition = `-- name: UpdateTaskPosition :execrows
+UPDATE tasks
+SET
+    position = $4
+WHERE
+    tenant_id = $1
+    AND project_id = $2
+    AND id = $3
+    AND archived_at IS NULL
+`
+
+type UpdateTaskPositionParams struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	ID        pgtype.UUID
+	Position  pgtype.Float8
+}
+
+func (q *Queries) UpdateTaskPosition(ctx context.Context, arg UpdateTaskPositionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateTaskPosition,
+		arg.TenantID,
+		arg.ProjectID,
+		arg.ID,
+		arg.Position,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -24,6 +24,7 @@ const (
 	WorkspaceSortDue      WorkspaceSort = "due"
 	WorkspaceSortPriority WorkspaceSort = "priority"
 	WorkspaceSortTitle    WorkspaceSort = "title"
+	WorkspaceSortPosition WorkspaceSort = "position"
 )
 
 func (s WorkspaceSort) Valid() bool {
@@ -32,7 +33,8 @@ func (s WorkspaceSort) Valid() bool {
 		WorkspaceSortUpdated,
 		WorkspaceSortDue,
 		WorkspaceSortPriority,
-		WorkspaceSortTitle:
+		WorkspaceSortTitle,
+		WorkspaceSortPosition:
 
 		return true
 	}
@@ -53,6 +55,7 @@ type WorkspaceCursor struct {
 	DueIsNull bool
 	Priority  *int32
 	Title     *string
+	Position  *float64
 }
 
 // WorkspaceListOptions holds every filter for the tenant-wide task list.
@@ -364,9 +367,26 @@ func workspaceColumns() string {
     t.updated_at,
     t.archived_at,
     t.start_at,
+    t.position,
+    t.estimate_seconds,
+    t.recurrence,
     s.name AS status_name,
     s.category AS status_category,
-    p.name AS project_name
+    p.name AS project_name,
+    COALESCE((
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', l.id,
+                'name', l.name,
+                'color', l.color
+            ) ORDER BY l.name, l.id
+        )
+        FROM task_labels tl
+        JOIN labels l
+            ON l.tenant_id = tl.tenant_id
+            AND l.id = tl.label_id
+        WHERE tl.task_id = t.id
+    ), '[]'::jsonb) AS labels
 `
 }
 
@@ -385,6 +405,13 @@ func buildWorkspaceOrder(
 	switch options.Sort {
 	case WorkspaceSortDue:
 		return " ORDER BY (t.due_at IS NULL) ASC, t.due_at " +
+			direction +
+			", t.id " + direction
+
+	case WorkspaceSortPosition:
+		// Board ordering: tasks without a position keep sorting last in
+		// both directions, mirroring the due-date treatment.
+		return " ORDER BY (t.position IS NULL) ASC, t.position " +
 			direction +
 			", t.id " + direction
 
@@ -462,6 +489,27 @@ func buildWorkspaceCursorPredicate(
 
 		return fmt.Sprintf(
 			"t.due_at IS NULL AND t.id %s %s",
+			comparison,
+			idParam,
+		), nil
+
+	case WorkspaceSortPosition:
+		// Same nulls-last structure as the due sort, with a float value.
+		if cursor.Position != nil {
+			valueParam := add(*cursor.Position)
+
+			return fmt.Sprintf(
+				"((t.position IS NOT NULL AND (t.position %s %s OR (t.position = %s AND t.id %s %s))) OR t.position IS NULL)",
+				comparison,
+				valueParam,
+				valueParam,
+				comparison,
+				idParam,
+			), nil
+		}
+
+		return fmt.Sprintf(
+			"t.position IS NULL AND t.id %s %s",
 			comparison,
 			idParam,
 		), nil
@@ -574,6 +622,8 @@ func scanWorkspaceTasks(
 		var statusCategory string
 		var projectName string
 
+		var labelsJSON []byte
+
 		err := rows.Scan(
 			&dbTask.ID,
 			&dbTask.TenantID,
@@ -591,9 +641,13 @@ func scanWorkspaceTasks(
 			&dbTask.UpdatedAt,
 			&dbTask.ArchivedAt,
 			&dbTask.StartAt,
+			&dbTask.Position,
+			&dbTask.EstimateSeconds,
+			&dbTask.Recurrence,
 			&statusName,
 			&statusCategory,
 			&projectName,
+			&labelsJSON,
 		)
 		if err != nil {
 			return nil, fmt.Errorf(
@@ -603,6 +657,20 @@ func scanWorkspaceTasks(
 		}
 
 		task := taskFromDB(dbTask)
+
+		var labels []Label
+
+		if err := json.Unmarshal(
+			labelsJSON,
+			&labels,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"decode task labels: %w",
+				err,
+			)
+		}
+
+		task.Labels = labels
 
 		tasks = append(
 			tasks,
@@ -668,15 +736,16 @@ func (r *Repository) GetForTenant(
 
 // workspaceCursorJSON is the wire format of WorkspaceCursor.
 type workspaceCursorJSON struct {
-	Sort      string  `json:"sort"`
-	Desc      bool    `json:"desc"`
-	ID        string  `json:"id"`
-	Title     *string `json:"title"`
-	Due       *string `json:"due"`
-	DueIsNull bool    `json:"dueIsNull"`
-	Created   *string `json:"created"`
-	Updated   *string `json:"updated"`
-	Priority  *int32  `json:"priority"`
+	Sort      string   `json:"sort"`
+	Desc      bool     `json:"desc"`
+	ID        string   `json:"id"`
+	Title     *string  `json:"title"`
+	Due       *string  `json:"due"`
+	DueIsNull bool     `json:"dueIsNull"`
+	Created   *string  `json:"created"`
+	Updated   *string  `json:"updated"`
+	Priority  *int32   `json:"priority"`
+	Position  *float64 `json:"position"`
 }
 
 func formatCursorTime(value time.Time) string {
@@ -712,6 +781,8 @@ func EncodeWorkspaceCursor(
 	}
 
 	data.Priority = cursor.Priority
+
+	data.Position = cursor.Position
 
 	encoded, err := json.Marshal(data)
 	if err != nil {
@@ -753,6 +824,7 @@ func DecodeWorkspaceCursor(
 		DueIsNull: data.DueIsNull,
 		Priority:  data.Priority,
 		Title:     data.Title,
+		Position:  data.Position,
 	}
 
 	if !cursor.Sort.Valid() {

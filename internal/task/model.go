@@ -33,6 +33,18 @@ type Task struct {
 
 	CompletedAt *time.Time
 
+	// Board ordering within the status column; set by the reorder endpoint
+	// and defaulted at creation.
+	Position        *float64
+	EstimateSeconds *int64
+
+	// Recurrence rule: daily | weekly | biweekly | monthly.
+	Recurrence *string
+
+	// Labels attached to the task; populated on detail reads and in the
+	// tenant-wide listing, not by every mutation response.
+	Labels []Label
+
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	ArchivedAt *time.Time

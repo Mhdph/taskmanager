@@ -155,6 +155,35 @@ func (r *Repository) Create(
 	if value := completedAtForCreate(category, time.Now().UTC()); value != nil {
 		completedAt = pgtype.Timestamptz{Time: *value, Valid: true}
 	}
+
+	// Default board position: append after the last task of the column with
+	// a generous gap so fractional insertions stay cheap.
+	maxPosition, err := queries.GetTaskMaxPosition(
+		ctx,
+		db.GetTaskMaxPositionParams{
+			TenantID: params.TenantID,
+			ProjectID: pgtype.UUID{
+				Bytes: projectID,
+				Valid: true,
+			},
+			StatusID: pgtype.UUID{
+				Bytes: statusID,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf(
+			"get task max position: %w",
+			err,
+		)
+	}
+
+	position := pgtype.Float8{
+		Float64: maxPosition + taskPositionGap,
+		Valid:   true,
+	}
+
 	row, err := queries.CreateTask(
 		ctx,
 		db.CreateTaskParams{
@@ -190,6 +219,8 @@ func (r *Repository) Create(
 			StartAt: startAt,
 
 			CompletedAt: completedAt,
+
+			Position: position,
 		},
 	)
 	if err != nil {
@@ -266,6 +297,21 @@ func taskFromDB(
 	if row.CompletedAt.Valid {
 		value := row.CompletedAt.Time
 		task.CompletedAt = &value
+	}
+
+	if row.Position.Valid {
+		value := row.Position.Float64
+		task.Position = &value
+	}
+
+	if row.EstimateSeconds.Valid {
+		value := row.EstimateSeconds.Int64
+		task.EstimateSeconds = &value
+	}
+
+	if row.Recurrence.Valid {
+		value := row.Recurrence.String
+		task.Recurrence = &value
 	}
 
 	if row.ArchivedAt.Valid {
@@ -515,6 +561,12 @@ type UpdateParams struct {
 
 	UpdateCompletedAt bool
 	CompletedAt       *time.Time
+
+	UpdateEstimate  bool
+	EstimateSeconds *int64
+
+	UpdateRecurrence bool
+	Recurrence       *string
 }
 
 func (r *Repository) Update(
@@ -639,6 +691,22 @@ func (r *Repository) Update(
 		}
 	}
 
+	var estimate pgtype.Int8
+	if params.EstimateSeconds != nil {
+		estimate = pgtype.Int8{
+			Int64: *params.EstimateSeconds,
+			Valid: true,
+		}
+	}
+
+	var recurrence pgtype.Text
+	if params.Recurrence != nil {
+		recurrence = pgtype.Text{
+			String: *params.Recurrence,
+			Valid:  true,
+		}
+	}
+
 	queries := r.queries
 	var mutationTx pgx.Tx
 	if params.UpdateParentTask || params.StatusID != nil {
@@ -732,6 +800,12 @@ func (r *Repository) Update(
 
 			UpdateDueAt: params.UpdateDueAt,
 			DueAt:       dueAt,
+
+			UpdateEstimate:  params.UpdateEstimate,
+			EstimateSeconds: estimate,
+
+			UpdateRecurrence: params.UpdateRecurrence,
+			Recurrence:       recurrence,
 
 			UpdateCompletedAt: params.UpdateCompletedAt,
 			CompletedAt:       completedAt,

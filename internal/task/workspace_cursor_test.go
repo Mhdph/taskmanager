@@ -94,6 +94,55 @@ func TestWorkspaceCursorRoundTripNullDue(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCursorRoundTripPosition(t *testing.T) {
+	position := 1024.5
+
+	cursor := WorkspaceCursor{
+		Sort:     WorkspaceSortPosition,
+		Desc:     false,
+		ID:       "0f6a4a2e-1111-4222-8333-444455556666",
+		Position: &position,
+	}
+
+	encoded, err := EncodeWorkspaceCursor(cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoded, err := DecodeWorkspaceCursor(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decoded.Sort != WorkspaceSortPosition {
+		t.Fatalf("sort = %q, want position", decoded.Sort)
+	}
+
+	if decoded.Position == nil || *decoded.Position != position {
+		t.Fatalf("position = %v, want %v", decoded.Position, position)
+	}
+
+	// The null-position branch also round trips.
+	nullCursor := WorkspaceCursor{
+		Sort: WorkspaceSortPosition,
+		ID:   "0f6a4a2e-1111-4222-8333-444455556666",
+	}
+
+	encoded, err = EncodeWorkspaceCursor(nullCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoded, err = DecodeWorkspaceCursor(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decoded.Position != nil {
+		t.Fatalf("position = %v, want nil", decoded.Position)
+	}
+}
+
 func TestDecodeWorkspaceCursorRejectsGarbage(t *testing.T) {
 	tests := []string{
 		"not-base64!!",

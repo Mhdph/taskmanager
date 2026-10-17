@@ -279,6 +279,12 @@ func workspaceCursorFromLastTask(
 			cursor.DueAt = &value
 		}
 
+	case WorkspaceSortPosition:
+		if last.Position != nil {
+			value := *last.Position
+			cursor.Position = &value
+		}
+
 	case WorkspaceSortPriority:
 		value := priorityRank(last.Priority)
 		cursor.Priority = &value

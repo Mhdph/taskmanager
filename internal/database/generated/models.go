@@ -21,6 +21,30 @@ type AuditLog struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type FavoriteProject struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	UserID    string
+	CreatedAt pgtype.Timestamptz
+}
+
+type FavoriteTask struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	UserID    string
+	CreatedAt pgtype.Timestamptz
+}
+
+type Label struct {
+	ID        pgtype.UUID
+	TenantID  string
+	Name      string
+	Color     string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Project struct {
 	ID              pgtype.UUID
 	TenantID        string
@@ -67,6 +91,9 @@ type Task struct {
 	UpdatedAt       pgtype.Timestamptz
 	ArchivedAt      pgtype.Timestamptz
 	StartAt         pgtype.Timestamptz
+	Position        pgtype.Float8
+	EstimateSeconds pgtype.Int8
+	Recurrence      pgtype.Text
 }
 
 type TaskAttachment struct {
@@ -107,6 +134,14 @@ type TaskDependency struct {
 	TaskID          pgtype.UUID
 	DependsOnTaskID pgtype.UUID
 	CreatedAt       pgtype.Timestamptz
+}
+
+type TaskLabel struct {
+	TenantID  string
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	LabelID   pgtype.UUID
+	CreatedAt pgtype.Timestamptz
 }
 
 type TaskTimeEntry struct {
