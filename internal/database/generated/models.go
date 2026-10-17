@@ -64,6 +64,18 @@ type ProjectMember struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type ProjectSavedView struct {
+	ID              pgtype.UUID
+	TenantID        string
+	ProjectID       pgtype.UUID
+	Name            string
+	ViewType        string
+	Filters         []byte
+	CreatedByUserID string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ProjectStatus struct {
 	ID        pgtype.UUID
 	TenantID  string

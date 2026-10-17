@@ -29,6 +29,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/search"
 	"github.com/mhdph/taskmanager/internal/storage"
 	"github.com/mhdph/taskmanager/internal/task"
+	"github.com/mhdph/taskmanager/internal/view"
 )
 
 func main() {
@@ -261,6 +262,17 @@ func main() {
 
 	favoriteHandler := favorite.NewHandler(
 		favoriteService,
+	)
+
+	// -------------------------------------------------------------------------
+	// Saved views module
+	// -------------------------------------------------------------------------
+
+	viewHandler := view.NewHandler(
+		view.NewService(
+			view.NewRepository(queries),
+			projectAuthorizer,
+		),
 	)
 
 	// -------------------------------------------------------------------------
@@ -568,6 +580,13 @@ func main() {
 				r.Put("/reorder", projectHandler.ReorderStatuses)
 				r.Patch("/{statusID}", projectHandler.UpdateStatus)
 				r.Delete("/{statusID}", projectHandler.DeleteStatus)
+			})
+
+			r.Route("/views", func(r chi.Router) {
+				r.Get("/", viewHandler.List)
+				r.Post("/", viewHandler.Create)
+				r.Patch("/{viewID}", viewHandler.Update)
+				r.Delete("/{viewID}", viewHandler.Delete)
 			})
 
 			r.Get(
