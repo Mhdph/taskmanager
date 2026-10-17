@@ -11,6 +11,250 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const searchAttachments = `-- name: SearchAttachments :many
+SELECT
+    a.id,
+    a.project_id,
+    a.task_id,
+    a.filename,
+    a.content_type,
+    a.size_bytes
+FROM task_attachments a
+JOIN projects p
+    ON p.tenant_id = a.tenant_id
+    AND p.id = a.project_id
+WHERE
+    a.tenant_id = $1
+
+    AND a.deleted_at IS NULL
+    AND p.archived_at IS NULL
+
+    AND (
+        $2::boolean = true
+
+        OR EXISTS (
+            SELECT 1
+            FROM project_members pm
+            WHERE
+                pm.tenant_id = a.tenant_id
+                AND pm.project_id = a.project_id
+                AND pm.user_id = $3
+        )
+    )
+
+    AND a.filename ILIKE '%' || $4::text || '%'
+
+ORDER BY
+    a.created_at DESC,
+    a.id DESC
+
+LIMIT $5
+`
+
+type SearchAttachmentsParams struct {
+	TenantID    string
+	IsAdmin     bool
+	UserID      string
+	SearchQuery string
+	PageLimit   int32
+}
+
+type SearchAttachmentsRow struct {
+	ID          pgtype.UUID
+	ProjectID   pgtype.UUID
+	TaskID      pgtype.UUID
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+}
+
+func (q *Queries) SearchAttachments(ctx context.Context, arg SearchAttachmentsParams) ([]SearchAttachmentsRow, error) {
+	rows, err := q.db.Query(ctx, searchAttachments,
+		arg.TenantID,
+		arg.IsAdmin,
+		arg.UserID,
+		arg.SearchQuery,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchAttachmentsRow
+	for rows.Next() {
+		var i SearchAttachmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchComments = `-- name: SearchComments :many
+SELECT
+    c.id,
+    c.project_id,
+    c.task_id,
+    c.body
+FROM task_comments c
+JOIN projects p
+    ON p.tenant_id = c.tenant_id
+    AND p.id = c.project_id
+WHERE
+    c.tenant_id = $1
+
+    AND c.deleted_at IS NULL
+    AND p.archived_at IS NULL
+
+    AND (
+        $2::boolean = true
+
+        OR EXISTS (
+            SELECT 1
+            FROM project_members pm
+            WHERE
+                pm.tenant_id = c.tenant_id
+                AND pm.project_id = c.project_id
+                AND pm.user_id = $3
+        )
+    )
+
+    AND c.body ILIKE '%' || $4::text || '%'
+
+ORDER BY
+    c.updated_at DESC,
+    c.id DESC
+
+LIMIT $5
+`
+
+type SearchCommentsParams struct {
+	TenantID    string
+	IsAdmin     bool
+	UserID      string
+	SearchQuery string
+	PageLimit   int32
+}
+
+type SearchCommentsRow struct {
+	ID        pgtype.UUID
+	ProjectID pgtype.UUID
+	TaskID    pgtype.UUID
+	Body      string
+}
+
+func (q *Queries) SearchComments(ctx context.Context, arg SearchCommentsParams) ([]SearchCommentsRow, error) {
+	rows, err := q.db.Query(ctx, searchComments,
+		arg.TenantID,
+		arg.IsAdmin,
+		arg.UserID,
+		arg.SearchQuery,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchCommentsRow
+	for rows.Next() {
+		var i SearchCommentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.Body,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchMembers = `-- name: SearchMembers :many
+SELECT
+    user_id,
+    email,
+    first_name,
+    last_name,
+    title
+FROM tenant_members
+WHERE
+    tenant_id = $1
+    AND status = 'active'
+
+    AND (
+        (
+            COALESCE(first_name, '')
+            || ' '
+            || COALESCE(last_name, '')
+        ) ILIKE '%' || $2::text || '%'
+        OR email ILIKE '%' || $2::text || '%'
+        OR title ILIKE '%' || $2::text || '%'
+    )
+
+ORDER BY
+    first_name ASC,
+    last_name ASC,
+    user_id ASC
+
+LIMIT $3
+`
+
+type SearchMembersParams struct {
+	TenantID    string
+	SearchQuery string
+	PageLimit   int32
+}
+
+type SearchMembersRow struct {
+	UserID    string
+	Email     string
+	FirstName string
+	LastName  string
+	Title     string
+}
+
+func (q *Queries) SearchMembers(ctx context.Context, arg SearchMembersParams) ([]SearchMembersRow, error) {
+	rows, err := q.db.Query(ctx, searchMembers, arg.TenantID, arg.SearchQuery, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchMembersRow
+	for rows.Next() {
+		var i SearchMembersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+			&i.Title,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchProjects = `-- name: SearchProjects :many
 SELECT
     p.id,

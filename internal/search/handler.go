@@ -28,6 +28,7 @@ type resultResponse struct {
 	ID string `json:"id"`
 
 	ProjectID *string `json:"projectId,omitempty"`
+	TaskID    *string `json:"taskId,omitempty"`
 
 	Title string `json:"title"`
 
@@ -38,6 +39,10 @@ type searchResponse struct {
 	Projects []resultResponse `json:"projects"`
 
 	Tasks []resultResponse `json:"tasks"`
+
+	People   []resultResponse `json:"people"`
+	Files    []resultResponse `json:"files"`
+	Comments []resultResponse `json:"comments"`
 }
 
 func toResultResponse(
@@ -49,6 +54,7 @@ func toResultResponse(
 		ID: item.ID,
 
 		ProjectID: item.ProjectID,
+		TaskID:    item.TaskID,
 
 		Title: item.Title,
 
@@ -177,11 +183,34 @@ func (h *Handler) Search(
 		)
 	}
 
+	newResult := func(
+		items []Result,
+	) []resultResponse {
+		mapped := make(
+			[]resultResponse,
+			0,
+			len(items),
+		)
+
+		for _, item := range items {
+			mapped = append(
+				mapped,
+				toResultResponse(item),
+			)
+		}
+
+		return mapped
+	}
+
 	response :=
 		searchResponse{
 			Projects: projects,
 
 			Tasks: tasks,
+
+			People:   newResult(result.People),
+			Files:    newResult(result.Files),
+			Comments: newResult(result.Comments),
 		}
 
 	w.Header().Set(

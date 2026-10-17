@@ -57,7 +57,10 @@ func (s *Service) Search(
 	switch searchType {
 	case "all",
 		"projects",
-		"tasks":
+		"tasks",
+		"people",
+		"files",
+		"comments":
 
 	default:
 		return Response{},
@@ -78,6 +81,10 @@ func (s *Service) Search(
 		Projects: make([]Result, 0),
 
 		Tasks: make([]Result, 0),
+
+		People:   make([]Result, 0),
+		Files:    make([]Result, 0),
+		Comments: make([]Result, 0),
 	}
 
 	isAdmin :=
@@ -128,6 +135,76 @@ func (s *Service) Search(
 
 		result.Tasks =
 			tasks
+	}
+
+	if searchType == "all" ||
+		searchType == "people" {
+
+		people, err :=
+			s.repository.Members(
+				ctx,
+				input.Identity.TenantID,
+				query,
+				int32(limit),
+			)
+
+		if err != nil {
+			return Response{}, fmt.Errorf(
+				"search people: %w",
+				err,
+			)
+		}
+
+		result.People =
+			people
+	}
+
+	if searchType == "all" ||
+		searchType == "files" {
+
+		files, err :=
+			s.repository.Files(
+				ctx,
+				input.Identity.TenantID,
+				input.Identity.UserID,
+				isAdmin,
+				query,
+				int32(limit),
+			)
+
+		if err != nil {
+			return Response{}, fmt.Errorf(
+				"search files: %w",
+				err,
+			)
+		}
+
+		result.Files =
+			files
+	}
+
+	if searchType == "all" ||
+		searchType == "comments" {
+
+		comments, err :=
+			s.repository.Comments(
+				ctx,
+				input.Identity.TenantID,
+				input.Identity.UserID,
+				isAdmin,
+				query,
+				int32(limit),
+			)
+
+		if err != nil {
+			return Response{}, fmt.Errorf(
+				"search comments: %w",
+				err,
+			)
+		}
+
+		result.Comments =
+			comments
 	}
 
 	return result, nil
