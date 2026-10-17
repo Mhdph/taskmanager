@@ -130,3 +130,16 @@ type TaskWatcher struct {
 	UserID    string
 	CreatedAt pgtype.Timestamptz
 }
+
+type TenantMember struct {
+	TenantID  string
+	UserID    string
+	Email     string
+	FirstName string
+	LastName  string
+	Role      string
+	Title     string
+	Status    string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}

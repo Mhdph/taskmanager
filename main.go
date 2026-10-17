@@ -22,6 +22,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/dashboard"
 	database "github.com/mhdph/taskmanager/internal/database/generated"
 	"github.com/mhdph/taskmanager/internal/hosted"
+	"github.com/mhdph/taskmanager/internal/member"
 	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/search"
@@ -154,6 +155,31 @@ func main() {
 
 	authMiddleware := auth.NewMiddleware(
 		identityResolver,
+	)
+
+	// -------------------------------------------------------------------------
+	// Member module
+	// -------------------------------------------------------------------------
+
+	memberRepository := member.NewRepository(
+		pool,
+		queries,
+	)
+
+	memberService := member.NewService(
+		memberRepository,
+	)
+
+	memberHandler := member.NewHandler(
+		memberService,
+	)
+
+	// Keep the tenant member directory in sync with hosted identities. Runs
+	// only on cache misses (fresh hosted resolution), not on every request.
+	identityResolver.SetSyncFunc(
+		func(ctx context.Context, identity auth.Identity) {
+			memberService.Sync(ctx, identity)
+		},
 	)
 
 	// -------------------------------------------------------------------------
@@ -335,6 +361,36 @@ func main() {
 			r.Post(
 				"/tasks/from-text",
 				aiHandler.TaskFromText,
+			)
+		},
+	)
+
+	// Members (workspace directory)
+	router.Route(
+		"/members",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				memberHandler.List,
+			)
+
+			r.Get(
+				"/{userID}",
+				memberHandler.Get,
+			)
+
+			r.Patch(
+				"/{userID}",
+				memberHandler.Update,
+			)
+
+			r.Delete(
+				"/{userID}",
+				memberHandler.Remove,
 			)
 		},
 	)

@@ -18,6 +18,10 @@ type ResolveInput struct {
 type Resolver struct {
 	hostedClient *hosted.Client
 	cache        *IdentityCache
+
+	// syncFunc is invoked after every fresh (non-cached) hosted identity
+	// resolution. Used to keep the tenant member directory in sync.
+	syncFunc func(context.Context, Identity)
 }
 
 func NewResolver(
@@ -28,6 +32,13 @@ func NewResolver(
 		hostedClient: hostedClient,
 		cache:        cache,
 	}
+}
+
+// SetSyncFunc registers a callback invoked whenever an identity is resolved
+// fresh from hosted (never on cache hits). It must be set before the server
+// starts serving requests.
+func (r *Resolver) SetSyncFunc(fn func(context.Context, Identity)) {
+	r.syncFunc = fn
 }
 
 func (r *Resolver) Resolve(
@@ -99,6 +110,10 @@ func (r *Resolver) Resolve(
 	}
 
 	r.cache.Set(key, identity)
+
+	if r.syncFunc != nil {
+		r.syncFunc(ctx, identity)
+	}
 
 	return identity, nil
 }
