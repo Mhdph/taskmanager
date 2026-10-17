@@ -446,6 +446,44 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 	return i, err
 }
 
+const getTaskForTenant = `-- name: GetTaskForTenant :one
+SELECT id, tenant_id, project_id, status_id, parent_task_id, title, description, priority, assignee_user_id, created_by_user_id, due_at, completed_at, created_at, updated_at, archived_at, start_at
+FROM tasks t
+WHERE
+    t.tenant_id = $1
+    AND t.id = $2
+    AND t.archived_at IS NULL
+`
+
+type GetTaskForTenantParams struct {
+	TenantID string
+	ID       pgtype.UUID
+}
+
+func (q *Queries) GetTaskForTenant(ctx context.Context, arg GetTaskForTenantParams) (Task, error) {
+	row := q.db.QueryRow(ctx, getTaskForTenant, arg.TenantID, arg.ID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ProjectID,
+		&i.StatusID,
+		&i.ParentTaskID,
+		&i.Title,
+		&i.Description,
+		&i.Priority,
+		&i.AssigneeUserID,
+		&i.CreatedByUserID,
+		&i.DueAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+		&i.StartAt,
+	)
+	return i, err
+}
+
 const listMyWorkTasks = `-- name: ListMyWorkTasks :many
 SELECT t.id, t.tenant_id, t.project_id, t.status_id, t.parent_task_id, t.title, t.description, t.priority, t.assignee_user_id, t.created_by_user_id, t.due_at, t.completed_at, t.created_at, t.updated_at, t.archived_at, t.start_at
 FROM tasks t

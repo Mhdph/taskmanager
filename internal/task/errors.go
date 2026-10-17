@@ -71,4 +71,20 @@ var (
 	ErrInvalidTaskDateRange = errors.New(
 		"task start date cannot be after due date",
 	)
+
+	ErrInvalidSort = errors.New(
+		"invalid sort key",
+	)
+
+	ErrInvalidStatusCategory = errors.New(
+		"invalid status category",
+	)
+
+	ErrInvalidCursor = errors.New(
+		"invalid cursor",
+	)
+
+	ErrBulkTooLarge = errors.New(
+		"cannot update that many tasks at once",
+	)
 )

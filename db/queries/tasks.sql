@@ -30,6 +30,14 @@ VALUES (
     sqlc.narg(completed_at)
 )
 RETURNING *;
+-- name: GetTaskForTenant :one
+SELECT *
+FROM tasks t
+WHERE
+    t.tenant_id = sqlc.arg(tenant_id)
+    AND t.id = sqlc.arg(id)
+    AND t.archived_at IS NULL;
+
 -- name: GetTaskForProject :one
 SELECT *
 FROM tasks

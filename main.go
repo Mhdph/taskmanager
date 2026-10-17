@@ -365,6 +365,26 @@ func main() {
 		},
 	)
 
+	// Workspace tasks (tenant-wide listing + bulk operations)
+	router.Route(
+		"/tasks",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				taskHandler.WorkspaceList,
+			)
+
+			r.Post(
+				"/bulk",
+				taskHandler.Bulk,
+			)
+		},
+	)
+
 	// Members (workspace directory)
 	router.Route(
 		"/members",
