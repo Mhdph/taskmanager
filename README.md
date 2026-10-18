@@ -129,6 +129,8 @@ roles control access; user IDs in application payloads do not replace authentica
   `POST /projects/{projectID}/restore` or
   `POST /projects/{projectID}/tasks/{taskID}/restore`.
 - [DeepSeek setup and AI endpoints](docs/ai.md).
+- [MCP setup for Codex and Claude Code](docs/mcp.md): read and claim tasks,
+  post results and update status through a local stdio server.
 
 ## Deployment settings
 

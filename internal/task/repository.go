@@ -575,6 +575,8 @@ type UpdateParams struct {
 
 	Priority *Priority
 
+	// ClaimOnly prevents replacing another assignee, checked under a row lock.
+	ClaimOnly      bool
 	UpdateAssignee bool
 	AssigneeUserID *string
 
@@ -737,7 +739,7 @@ func (r *Repository) Update(
 
 	queries := r.queries
 	var mutationTx pgx.Tx
-	if params.UpdateParentTask || params.StatusID != nil {
+	if params.UpdateParentTask || params.StatusID != nil || params.ClaimOnly {
 		mutationTx, err = r.db.Begin(ctx)
 		if err != nil {
 			return Task{}, fmt.Errorf("begin task update transaction: %w", err)
@@ -802,6 +804,26 @@ func (r *Repository) Update(
 		completedAt = pgtype.Timestamptz{}
 		if value != nil {
 			completedAt = pgtype.Timestamptz{Time: *value, Valid: true}
+		}
+	}
+
+	if params.ClaimOnly {
+		current, err := queries.LockTaskForUpdate(ctx, db.LockTaskForUpdateParams{
+			TenantID:  params.TenantID,
+			ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+			ID:        pgtype.UUID{Bytes: taskID, Valid: true},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrTaskNotFound
+		}
+		if err != nil {
+			return Task{}, fmt.Errorf("lock task claim: %w", err)
+		}
+		if !params.UpdateAssignee || params.AssigneeUserID == nil || *params.AssigneeUserID == "" {
+			return Task{}, ErrAssigneeNotMember
+		}
+		if current.AssigneeUserID.Valid && current.AssigneeUserID.String != *params.AssigneeUserID {
+			return Task{}, ErrTaskAlreadyAssigned
 		}
 	}
 

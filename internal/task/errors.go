@@ -8,6 +8,8 @@ var (
 	ErrInvalidPriority = errors.New("invalid task priority")
 	ErrInvalidDueDate  = errors.New("invalid due date")
 
+	ErrTaskAlreadyAssigned = errors.New("task is already assigned to another user")
+
 	ErrTaskNotFound = errors.New("task not found")
 
 	ErrStatusNotFound = errors.New("task status not found")

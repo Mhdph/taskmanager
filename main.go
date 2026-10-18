@@ -676,6 +676,7 @@ func main() {
 					r.Patch("/", taskHandler.Update)
 					r.Delete("/", taskHandler.Archive)
 					r.Post("/restore", taskHandler.Restore)
+					r.Post("/claim", taskHandler.Claim)
 
 					r.Route("/labels", func(r chi.Router) {
 						r.Get("/", taskHandler.GetTaskLabels)

@@ -552,6 +552,8 @@ type UpdateInput struct {
 
 	Priority *Priority
 
+	// ClaimOnly prevents replacing another assignee, checked under a row lock.
+	ClaimOnly      bool
 	UpdateAssignee bool
 	AssigneeUserID *string
 
@@ -616,6 +618,11 @@ func (s *Service) Update(
 			"authorize task update: %w",
 			err,
 		)
+	}
+
+	if input.ClaimOnly {
+		input.UpdateAssignee = true
+		input.AssigneeUserID = &input.Identity.UserID
 	}
 
 	current, err := s.repository.GetForProject(
@@ -809,6 +816,7 @@ func (s *Service) Update(
 
 			Priority: input.Priority,
 
+			ClaimOnly:      input.ClaimOnly,
 			UpdateAssignee: input.UpdateAssignee,
 			AssigneeUserID: input.AssigneeUserID,
 
