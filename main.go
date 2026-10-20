@@ -29,6 +29,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/search"
 	"github.com/mhdph/taskmanager/internal/storage"
+	"github.com/mhdph/taskmanager/internal/storagegc"
 	"github.com/mhdph/taskmanager/internal/task"
 	"github.com/mhdph/taskmanager/internal/team"
 	"github.com/mhdph/taskmanager/internal/view"
@@ -125,6 +126,25 @@ func main() {
 	// -------------------------------------------------------------------------
 
 	queries := database.New(pool)
+
+	// Attachment objects are removed on the happy path, but a crash, a
+	// failed cleanup or a cascading database delete can leave objects
+	// behind. The reconciler removes the objects that no live attachment
+	// row references any more.
+	if storageClient.Enabled() {
+		reconciler := storagegc.NewReconciler(
+			storageClient,
+			storagegc.NewSQLReferences(queries),
+		)
+
+		go reconciler.Run(
+			ctx,
+			time.Hour,
+			storagegc.Options{
+				GracePeriod: cfg.Storage.ReconcileGracePeriod,
+			},
+		)
+	}
 
 	// -------------------------------------------------------------------------
 	// Hosted

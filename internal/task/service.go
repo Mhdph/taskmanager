@@ -1705,8 +1705,7 @@ func (s *Service) UploadAttachment(
 	attachmentID :=
 		uuid.NewString()
 
-	objectKey := fmt.Sprintf(
-		"tenants/%s/projects/%s/tasks/%s/%s",
+	objectKey := storage.TaskAttachmentObjectKey(
 		input.Identity.TenantID,
 		input.ProjectID,
 		input.TaskID,
@@ -1766,11 +1765,15 @@ func (s *Service) UploadAttachment(
 		)
 
 	if err != nil {
-		// DB fail شده ولی object روی MinIO
-		// ساخته شده. تلاش می‌کنیم orphan نشود.
+		// The database write failed but the object was already uploaded.
+		// Use a detached context: a canceled request must not leave the
+		// object behind, and the storage reconciler is the safety net.
+		cleanupCtx, cleanupCancel := attachmentStorageContext()
+		defer cleanupCancel()
+
 		if cleanupErr :=
 			s.fileStorage.Delete(
-				ctx,
+				cleanupCtx,
 				objectKey,
 			); cleanupErr != nil {
 
@@ -1848,6 +1851,12 @@ type AttachmentDownload struct {
 	URL string
 
 	ExpiresAt time.Time
+}
+
+// attachmentStorageContext detaches storage cleanup from the request
+// context, so a canceled request cannot leave an object behind.
+func attachmentStorageContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
 func (s *Service) GetAttachmentDownload(
@@ -1960,7 +1969,13 @@ func (s *Service) DeleteAttachment(
 			err,
 		)
 	}
-	if err := s.fileStorage.Delete(ctx, attachment.ObjectKey); err != nil {
+	// The metadata is already committed. Delete the object with a detached
+	// context so a client disconnect cannot leave the object behind; the
+	// storage reconciler removes it later if this fails.
+	cleanupCtx, cleanupCancel := attachmentStorageContext()
+	defer cleanupCancel()
+
+	if err := s.fileStorage.Delete(cleanupCtx, attachment.ObjectKey); err != nil {
 		log.Printf("attachment storage cleanup failed attachment_id=%s: %v", attachment.ID, err)
 	}
 

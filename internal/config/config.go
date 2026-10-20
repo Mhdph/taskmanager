@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -52,6 +53,11 @@ type StorageConfig struct {
 	PublicURL string
 
 	MaxUploadSize int64
+
+	// ReconcileGracePeriod is how long a storage object must be untouched
+	// before the storage reconciler may remove it. It protects uploads
+	// that have not reached the database yet.
+	ReconcileGracePeriod time.Duration
 }
 
 type NotificationConfig struct {
@@ -76,6 +82,22 @@ func Load() (Config, error) {
 	databaseURL, err := requireEnv("DATABASE_URL")
 	if err != nil {
 		return Config{}, err
+	}
+
+	// Objects are only removed once they are old enough that no upload
+	// can still be in flight.
+	reconcileGracePeriod := 10 * time.Minute
+
+	if raw := os.Getenv("MINIO_RECONCILE_GRACE_PERIOD"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed < 0 {
+			return Config{}, fmt.Errorf(
+				"invalid MINIO_RECONCILE_GRACE_PERIOD: %q",
+				raw,
+			)
+		}
+
+		reconcileGracePeriod = parsed
 	}
 
 	graphQLEndpoint, err := requireEnv("HOSTED_GRAPHQL_ENDPOINT")
@@ -136,6 +158,8 @@ func Load() (Config, error) {
 			PublicURL: os.Getenv("MINIO_PUBLIC_URL"),
 
 			MaxUploadSize: 25 * 1024 * 1024,
+
+			ReconcileGracePeriod: reconcileGracePeriod,
 		},
 
 		Chat: ChatConfig{

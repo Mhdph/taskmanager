@@ -226,9 +226,18 @@ roles control access; user IDs in application payloads do not replace authentica
     `attachments` array. Deleting a message deletes its attachment metadata
     and storage objects. Pending uploads that are never sent are swept after
     24 hours. Files are served with an attachment disposition, and filenames
-    are sanitized before they reach a response header. Deleting a project
-    cascades chat metadata in the database; objects left by that cascade need
-    a future storage reconciliation job.
+    are sanitized before they reach a response header.
+  - Storage reconciliation: a background job lists the attachment objects the
+    application owns (`tenants/{tenant}/chat/...` and
+    `tenants/{tenant}/projects/.../tasks/...`) and removes the ones that no
+    live attachment row references any more. It runs at startup and hourly,
+    so a crash, a failed cleanup or a cascading database delete (a deleted
+    task, conversation or project) cannot leak objects in the bucket.
+    Soft-deleted attachment rows do not count as references, because the
+    download endpoints already filter them out. Objects modified in the last
+    ten minutes are left alone, which protects an upload that has not been
+    written to the database yet, and objects outside the attachment layout
+    are never touched.
 - Time tracking under `/projects/{projectID}/tasks/{taskID}/time-entries`:
   `POST /start`, `POST /stop`, `GET /`, `DELETE /{entryID}`. Each user has one active
   timer per tenant. Only the owner can stop a timer or delete their completed entry.

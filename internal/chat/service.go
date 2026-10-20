@@ -1091,8 +1091,7 @@ func (s *Service) UploadAttachment(
 
 	attachmentID := uuid.NewString()
 
-	objectKey := fmt.Sprintf(
-		"tenants/%s/chat/%s/%s",
+	objectKey := storage.ChatAttachmentObjectKey(
 		input.Identity.TenantID,
 		conversation.ID,
 		attachmentID,

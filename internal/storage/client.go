@@ -159,6 +159,57 @@ func (c *Client) Upload(
 	return nil
 }
 
+// ObjectInfo describes one stored object.
+type ObjectInfo struct {
+	Key string
+
+	LastModified time.Time
+
+	Size int64
+}
+
+// List walks the objects under prefix and calls fn for every object. The
+// walk is streaming: the callback decides what to keep in memory, so a
+// large bucket does not have to fit in RAM.
+func (c *Client) List(
+	ctx context.Context,
+	prefix string,
+	fn func(ObjectInfo) error,
+) error {
+	if c.disabled {
+		return ErrStorageDisabled
+	}
+
+	for object := range c.client.ListObjects(
+		ctx,
+		c.bucket,
+		minio.ListObjectsOptions{
+			Prefix:    prefix,
+			Recursive: true,
+		},
+	) {
+		if object.Err != nil {
+			return fmt.Errorf("list objects: %w", object.Err)
+		}
+
+		err := fn(ObjectInfo{
+			Key:          object.Key,
+			LastModified: object.LastModified,
+			Size:         object.Size,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Enabled reports whether the client talks to a real object store.
+func (c *Client) Enabled() bool {
+	return !c.disabled
+}
+
 func (c *Client) Delete(
 	ctx context.Context,
 	objectKey string,
