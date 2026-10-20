@@ -17,6 +17,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/ai"
 	"github.com/mhdph/taskmanager/internal/audit"
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/chat"
 	"github.com/mhdph/taskmanager/internal/comment"
 	"github.com/mhdph/taskmanager/internal/config"
 	"github.com/mhdph/taskmanager/internal/dashboard"
@@ -226,6 +227,21 @@ func main() {
 
 	projectHandler := project.NewHandler(
 		projectService,
+	)
+
+	// -------------------------------------------------------------------------
+	// Chat module
+	// -------------------------------------------------------------------------
+
+	chatHandler := chat.NewHandler(
+		chat.NewService(
+			chat.NewRepository(
+				pool,
+				queries,
+			),
+			projectRepository,
+			projectAuthorizer,
+		),
 	)
 
 	// -------------------------------------------------------------------------
@@ -624,6 +640,56 @@ func main() {
 		},
 	)
 
+	// Conversations (direct, group and project chat)
+	router.Route(
+		"/conversations",
+		func(r chi.Router) {
+			r.Use(
+				authMiddleware.Authenticate,
+			)
+
+			r.Get(
+				"/",
+				chatHandler.List,
+			)
+
+			r.Post(
+				"/",
+				chatHandler.Create,
+			)
+
+			r.Route(
+				"/{conversationID}",
+				func(r chi.Router) {
+					r.Get(
+						"/",
+						chatHandler.Get,
+					)
+
+					r.Get(
+						"/messages",
+						chatHandler.ListMessages,
+					)
+
+					r.Post(
+						"/read",
+						chatHandler.MarkRead,
+					)
+
+					r.Post(
+						"/members",
+						chatHandler.AddMember,
+					)
+
+					r.Delete(
+						"/members/{userID}",
+						chatHandler.RemoveMember,
+					)
+				},
+			)
+		},
+	)
+
 	// Projects
 	router.Route("/projects", func(r chi.Router) {
 		r.Use(authMiddleware.Authenticate)
@@ -637,6 +703,7 @@ func main() {
 			r.Delete("/", projectHandler.Archive)
 			r.Post("/restore", projectHandler.Restore)
 			r.Get("/activity", auditHandler.ProjectActivity)
+			r.Get("/chat", chatHandler.ProjectChat)
 
 			r.Route("/members", func(r chi.Router) {
 				r.Get("/", projectHandler.ListMembers)

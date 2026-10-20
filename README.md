@@ -122,6 +122,12 @@ roles control access; user IDs in application payloads do not replace authentica
 
 - Projects, memberships, configurable statuses and tasks.
 - Comments, watchers, attachments, dependencies, search and dashboard.
+- Chat under `/conversations` and `/projects/{projectID}/chat`: one decision
+  thread per project, direct messages (a single thread per user pair) and group
+  conversations. `GET /conversations` includes unread counts and the last
+  message; `GET /conversations/{id}/messages?before=<cursor>` pages history by
+  the monotonic message sequence; `POST /conversations/{id}/read` advances the
+  per-member read cursor. Project chat membership follows project membership.
 - Time tracking under `/projects/{projectID}/tasks/{taskID}/time-entries`:
   `POST /start`, `POST /stop`, `GET /`, `DELETE /{entryID}`. Each user has one active
   timer per tenant. Only the owner can stop a timer or delete their completed entry.
