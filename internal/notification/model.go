@@ -6,6 +6,7 @@ const (
 	EventCommentMentioned  EventType = "comment.mentioned"
 	EventTaskAssigned      EventType = "task.assigned"
 	EventTaskStatusChanged EventType = "task.status_changed"
+	EventChatMessage       EventType = "chat.message"
 )
 
 type SendInput struct {
@@ -20,6 +21,9 @@ type SendInput struct {
 	ProjectID *string `json:"projectId,omitempty"`
 	TaskID    *string `json:"taskId,omitempty"`
 	CommentID *string `json:"commentId,omitempty"`
+
+	ConversationID *string `json:"conversationId,omitempty"`
+	MessageID      *string `json:"messageId,omitempty"`
 
 	Title string  `json:"title"`
 	Body  *string `json:"body,omitempty"`

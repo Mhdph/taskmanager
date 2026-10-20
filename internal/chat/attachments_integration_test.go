@@ -102,6 +102,8 @@ func TestServiceAttachmentUploadSendAndAccess(t *testing.T) {
 		nil,
 		fileStorage,
 		1<<20,
+		nil,
+		nil,
 	)
 
 	alice := auth.Identity{TenantID: tenant, UserID: "alice"}
@@ -276,6 +278,8 @@ func TestServiceAttachmentValidationAndCancelAndCleanup(t *testing.T) {
 		nil,
 		fileStorage,
 		1024,
+		nil,
+		nil,
 	)
 
 	alice := auth.Identity{TenantID: tenant, UserID: "alice"}

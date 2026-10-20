@@ -452,7 +452,7 @@ func TestServiceTypingAuthorizationAndPublish(t *testing.T) {
 
 	recorder := &recordingPublisher{}
 
-	service := NewService(repository, nil, nil, recorder, nil, 0)
+	service := NewService(repository, nil, nil, recorder, nil, 0, nil, nil)
 
 	alice := auth.Identity{TenantID: tenant, UserID: "alice"}
 	eve := auth.Identity{TenantID: tenant, UserID: "eve"}

@@ -155,6 +155,17 @@ roles control access; user IDs in application payloads do not replace authentica
     `presence.online` / `presence.offline` frames for users who share a
     conversation. Presence is instance-local in this version; correct
     multi-instance presence needs a shared lease/heartbeat store.
+  - Offline notifications: after a message commits, every member without a
+    live connection on this API instance gets a `chat.message` notification
+    through `NOTIFICATION_SERVICE_URL`, with the project, conversation and
+    message ids, the actor, a title and a 200-character preview (`Sent an
+    attachment` for attachment-only messages). The author is skipped, online
+    members are skipped, and idempotent retries notify only once. Delivery is
+    best-effort through the bounded dispatcher, so a full queue or a failing
+    notification service never fails the message write. Because presence is
+    instance-local, a member connected to another instance can receive both
+    the stream frame and a notification. Chat notifications stay disabled when
+    `NOTIFICATION_SERVICE_URL` is empty.
   - Attachments are uploaded before the message:
     1. `POST /conversations/{id}/attachments` with multipart field `file`
        returns pending attachment metadata (same size limit as task

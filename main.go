@@ -250,6 +250,13 @@ func main() {
 		log.Fatalf("start chat broker: %v", err)
 	}
 
+	// Chat is high volume: without a configured notification service,
+	// enqueueing would only log delivery failures for every message.
+	var chatNotifications chat.NotificationSender
+	if cfg.Notification.BaseURL != "" {
+		chatNotifications = notificationDispatcher
+	}
+
 	chatService := chat.NewService(
 		chatRepository,
 		projectRepository,
@@ -257,6 +264,8 @@ func main() {
 		chatBroker,
 		storageClient,
 		cfg.Storage.MaxUploadSize,
+		chatHub,
+		chatNotifications,
 	)
 
 	// Pending uploads that were never sent are swept periodically so

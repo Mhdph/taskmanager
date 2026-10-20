@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/storage"
 )
@@ -41,6 +42,8 @@ const (
 	attachmentDownloadExpiry = 5 * time.Minute
 
 	attachmentCleanupBatch = 100
+
+	maxNotificationPreviewRunes = 200
 )
 
 // FileStorage is the object-storage subset used by chat attachments.
@@ -69,6 +72,19 @@ type Publisher interface {
 	Publish(ctx context.Context, event Event) error
 }
 
+// PresenceChecker reports whether a user has a live stream connection on this
+// API instance. Offline chat notifications use it to avoid notifying a user
+// who already received the message over WebSocket.
+type PresenceChecker interface {
+	IsOnline(tenantID string, userID string) bool
+}
+
+// NotificationSender enqueues an offline notification (the production
+// implementation is notification.Dispatcher).
+type NotificationSender interface {
+	Send(ctx context.Context, input notification.SendInput) error
+}
+
 // Service owns conversation access rules. Project conversations delegate to
 // the project authorizer so chat visibility can never drift from project
 // visibility; DM and group conversations are member-only.
@@ -84,6 +100,10 @@ type Service struct {
 	fileStorage FileStorage
 
 	maxUploadSize int64
+
+	presence PresenceChecker
+
+	notifications NotificationSender
 }
 
 func NewService(
@@ -93,6 +113,8 @@ func NewService(
 	publisher Publisher,
 	fileStorage FileStorage,
 	maxUploadSize int64,
+	presence PresenceChecker,
+	notifications NotificationSender,
 ) *Service {
 	return &Service{
 		repository: repository,
@@ -106,6 +128,10 @@ func NewService(
 		fileStorage: fileStorage,
 
 		maxUploadSize: maxUploadSize,
+
+		presence: presence,
+
+		notifications: notifications,
 	}
 }
 
@@ -432,7 +458,7 @@ func (s *Service) SendMessage(
 
 	authorUserID := input.Identity.UserID
 
-	return s.repository.CreateMessage(
+	message, created, err := s.repository.CreateMessage(
 		ctx,
 		CreateMessageParams{
 			ID: uuid.NewString(),
@@ -452,6 +478,185 @@ func (s *Service) SendMessage(
 			AttachmentIDs: attachmentIDs,
 		},
 	)
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	// Idempotent retries must not notify twice. Delivery is best-effort:
+	// a notification failure never fails the message send.
+	if created {
+		s.notifyMessageCreated(conversation, message)
+	}
+
+	return message, created, nil
+}
+
+func (s *Service) notifyMessageCreated(
+	conversation Conversation,
+	message Message,
+) {
+	if s.notifications == nil {
+		return
+	}
+
+	// The message is committed. A detached context keeps notification
+	// enqueueing from being skipped when the sender disconnects
+	// immediately after the write.
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	members, err := s.repository.ListMembers(
+		ctx,
+		message.TenantID,
+		conversation.ID,
+	)
+	if err != nil {
+		log.Printf(
+			"list members for chat notification: %v",
+			err,
+		)
+		return
+	}
+
+	authorUserID := ""
+	if message.AuthorUserID != nil {
+		authorUserID = *message.AuthorUserID
+	}
+
+	title := s.chatNotificationTitle(ctx, conversation)
+
+	body := chatNotificationBody(message)
+
+	conversationID := conversation.ID
+	messageID := message.ID
+
+	for _, member := range members {
+		if member.UserID == authorUserID {
+			continue
+		}
+
+		// Online users get the message over the stream; a notification
+		// would duplicate it.
+		if s.presence != nil &&
+			s.presence.IsOnline(message.TenantID, member.UserID) {
+
+			continue
+		}
+
+		input := notification.SendInput{
+			TenantID: message.TenantID,
+
+			RecipientUserID: member.UserID,
+
+			Type: notification.EventChatMessage,
+
+			ActorUserID: message.AuthorUserID,
+
+			ProjectID: conversation.ProjectID,
+
+			ConversationID: &conversationID,
+
+			MessageID: &messageID,
+
+			Title: title,
+
+			Body: &body,
+
+			Data: map[string]any{
+				"conversationId": conversationID,
+
+				"conversationType": string(conversation.Type),
+
+				"messageId": messageID,
+
+				"seq": message.Seq,
+
+				"attachmentCount": len(message.Attachments),
+			},
+		}
+
+		if err := s.notifications.Send(ctx, input); err != nil {
+			log.Printf(
+				"send chat notification to %s: %v",
+				member.UserID,
+				err,
+			)
+
+			if errors.Is(err, notification.ErrQueueFull) {
+				return
+			}
+		}
+	}
+}
+
+func (s *Service) chatNotificationTitle(
+	ctx context.Context,
+	conversation Conversation,
+) string {
+	switch conversation.Type {
+	case ConversationTypeDM:
+		return "New direct message"
+
+	case ConversationTypeGroup:
+		if conversation.Title != "" {
+			return "New message in " + conversation.Title
+		}
+
+		return "New group message"
+
+	case ConversationTypeProject:
+		if conversation.ProjectID != nil && s.projectRepository != nil {
+			projectItem, err := s.projectRepository.GetForTenant(
+				ctx,
+				conversation.TenantID,
+				*conversation.ProjectID,
+			)
+			if err == nil && projectItem.Name != "" {
+				return "New message in " + projectItem.Name
+			}
+		}
+
+		return "New message in project chat"
+
+	default:
+		return "New chat message"
+	}
+}
+
+func chatNotificationBody(message Message) string {
+	preview := strings.Join(
+		strings.Fields(message.Body),
+		" ",
+	)
+
+	switch attachments := len(message.Attachments); {
+	case attachments == 1 && preview == "":
+		preview = "Sent an attachment"
+
+	case attachments > 1 && preview == "":
+		preview = fmt.Sprintf("Sent %d attachments", attachments)
+
+	case attachments == 1:
+		preview += " (1 attachment)"
+
+	case attachments > 1:
+		preview += fmt.Sprintf(" (%d attachments)", attachments)
+	}
+
+	if preview == "" {
+		preview = "New message"
+	}
+
+	if utf8.RuneCountInString(preview) > maxNotificationPreviewRunes {
+		preview = string(
+			[]rune(preview)[:maxNotificationPreviewRunes],
+		) + "…"
+	}
+
+	return preview
 }
 
 type TypingInput struct {
