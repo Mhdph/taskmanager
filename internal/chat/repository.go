@@ -375,6 +375,25 @@ func (r *Repository) listMembersByConversation(
 // Members
 // -------------------------------------------------------------------------
 
+func (r *Repository) ListConversationIDsForUser(
+	ctx context.Context,
+	tenantID string,
+	userID string,
+) ([]string, error) {
+	ids, err := r.queries.ListChatConversationIDsForUser(
+		ctx,
+		db.ListChatConversationIDsForUserParams{
+			TenantID: tenantID,
+			UserID:   userID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list user conversations: %w", err)
+	}
+
+	return ids, nil
+}
+
 func (r *Repository) ListMembers(
 	ctx context.Context,
 	tenantID string,

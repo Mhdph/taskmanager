@@ -22,6 +22,8 @@ type Handler struct {
 	// allowedOrigins are the cross-origin hosts accepted by the WebSocket
 	// upgrade. The request host is always accepted.
 	allowedOrigins []string
+
+	typingLimiter *typingLimiter
 }
 
 func NewHandler(
@@ -35,6 +37,8 @@ func NewHandler(
 		hub: hub,
 
 		allowedOrigins: allowedOrigins,
+
+		typingLimiter: newTypingLimiter(),
 	}
 }
 
@@ -402,6 +406,54 @@ func (h *Handler) Get(
 	); err != nil {
 		log.Printf(
 			"encode conversation detail: %v",
+			err,
+		)
+	}
+}
+
+type presenceResponse struct {
+	UserIDs []string `json:"userIds"`
+}
+
+// Presence returns the conversation members currently connected to this API
+// instance.
+func (h *Handler) Presence(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	detail, err := h.service.Get(
+		r.Context(),
+		identity,
+		chi.URLParam(r, "conversationID"),
+	)
+	if err != nil {
+		h.writeError(w, "conversation presence", err)
+		return
+	}
+
+	userIDs := make([]string, 0, len(detail.Members))
+
+	for _, member := range detail.Members {
+		if h.hub.IsOnline(identity.TenantID, member.UserID) {
+			userIDs = append(userIDs, member.UserID)
+		}
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		presenceResponse{UserIDs: userIDs},
+	); err != nil {
+		log.Printf(
+			"encode conversation presence: %v",
 			err,
 		)
 	}

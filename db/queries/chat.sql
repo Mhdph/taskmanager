@@ -138,6 +138,14 @@ LIMIT sqlc.arg(page_limit);
 
 -- Members
 
+-- name: ListChatConversationIDsForUser :many
+SELECT conversation_id::text AS conversation_id
+FROM conversation_members
+WHERE
+    tenant_id = $1
+    AND user_id = $2
+ORDER BY conversation_id;
+
 -- name: ListConversationMembers :many
 SELECT *
 FROM conversation_members

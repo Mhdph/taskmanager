@@ -554,6 +554,42 @@ func (q *Queries) GetProjectConversation(ctx context.Context, arg GetProjectConv
 	return i, err
 }
 
+const listChatConversationIDsForUser = `-- name: ListChatConversationIDsForUser :many
+
+SELECT conversation_id::text AS conversation_id
+FROM conversation_members
+WHERE
+    tenant_id = $1
+    AND user_id = $2
+ORDER BY conversation_id
+`
+
+type ListChatConversationIDsForUserParams struct {
+	TenantID string
+	UserID   string
+}
+
+// Members
+func (q *Queries) ListChatConversationIDsForUser(ctx context.Context, arg ListChatConversationIDsForUserParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listChatConversationIDsForUser, arg.TenantID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var conversation_id string
+		if err := rows.Scan(&conversation_id); err != nil {
+			return nil, err
+		}
+		items = append(items, conversation_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatMessages = `-- name: ListChatMessages :many
 SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
 FROM messages
@@ -647,7 +683,6 @@ func (q *Queries) ListChatTenantMemberIDsIn(ctx context.Context, arg ListChatTen
 }
 
 const listConversationMembers = `-- name: ListConversationMembers :many
-
 SELECT conversation_id, tenant_id, user_id, role, source, last_read_seq, joined_at
 FROM conversation_members
 WHERE
@@ -663,7 +698,6 @@ type ListConversationMembersParams struct {
 	ConversationIds []pgtype.UUID
 }
 
-// Members
 func (q *Queries) ListConversationMembers(ctx context.Context, arg ListConversationMembersParams) ([]ConversationMember, error) {
 	rows, err := q.db.Query(ctx, listConversationMembers, arg.TenantID, arg.ConversationIds)
 	if err != nil {

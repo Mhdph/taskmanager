@@ -694,6 +694,11 @@ func main() {
 					)
 
 					r.Get(
+						"/presence",
+						chatHandler.Presence,
+					)
+
+					r.Get(
 						"/messages",
 						chatHandler.ListMessages,
 					)

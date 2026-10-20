@@ -393,6 +393,42 @@ func (s *Service) SendMessage(
 	)
 }
 
+type TypingInput struct {
+	Identity auth.Identity
+
+	ConversationID string
+
+	Typing bool
+}
+
+// SetTyping validates membership and publishes an ephemeral typing event.
+// It is never persisted; clients that are offline simply miss the indicator.
+func (s *Service) SetTyping(
+	ctx context.Context,
+	input TypingInput,
+) error {
+	conversation, _, err := s.authorize(
+		ctx,
+		input.Identity,
+		input.ConversationID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if s.publisher == nil {
+		return nil
+	}
+
+	return s.publisher.Publish(ctx, Event{
+		Kind:           EventTyping,
+		TenantID:       input.Identity.TenantID,
+		ConversationID: conversation.ID,
+		ActorUserID:    input.Identity.UserID,
+		Typing:         input.Typing,
+	})
+}
+
 type EditMessageInput struct {
 	Identity auth.Identity
 

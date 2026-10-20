@@ -142,6 +142,19 @@ roles control access; user IDs in application payloads do not replace authentica
     using `seq`. Fan-out uses Postgres `LISTEN/NOTIFY`, so multiple API
     instances stay in sync. `CHAT_WS_ORIGINS` lists allowed cross-origin hosts;
     the request host is always accepted.
+  - Typing indicators: send `{"type":"typing","conversationId":"<id>",
+    "typing":true}` over the stream. The server validates membership, throttles
+    repeated start events to one every two seconds, and pushes
+    `{"type":"typing","conversationId":"<id>","userId":"...","typing":true}`
+    to the other conversation members (also across API instances). Send
+    `typing:false` when the composer empties or loses focus, and expire the
+    indicator client-side after a few seconds without a refresh in case a stop
+    frame is lost.
+  - Presence: `GET /conversations/{id}/presence` returns the member ids
+    currently connected to this API instance, and the stream pushes
+    `presence.online` / `presence.offline` frames for users who share a
+    conversation. Presence is instance-local in this version; correct
+    multi-instance presence needs a shared lease/heartbeat store.
 - Time tracking under `/projects/{projectID}/tasks/{taskID}/time-entries`:
   `POST /start`, `POST /stop`, `GET /`, `DELETE /{entryID}`. Each user has one active
   timer per tenant. Only the owner can stop a timer or delete their completed entry.

@@ -344,11 +344,11 @@ func TestHubHydratesAndRoutesEvents(t *testing.T) {
 		send:     make(chan []byte, 4),
 	}
 
-	hub.Register(bobClient)
-	hub.Register(eveClient)
+	hub.Register(ctx, bobClient)
+	hub.Register(ctx, eveClient)
 	t.Cleanup(func() {
-		hub.Unregister(bobClient)
-		hub.Unregister(eveClient)
+		hub.Unregister(ctx, bobClient)
+		hub.Unregister(ctx, eveClient)
 	})
 
 	hub.HandleEvent(ctx, Event{
@@ -418,5 +418,198 @@ func waitForEvent(t *testing.T, events <-chan Event, kind EventKind) Event {
 		case <-timeout:
 			t.Fatalf("timed out waiting for %s", kind)
 		}
+	}
+}
+
+func TestServiceTypingAuthorizationAndPublish(t *testing.T) {
+	repository, pool, ctx := integrationChatRepository(t)
+
+	const tenant = "tenant-a"
+
+	addTenantMembers(t, pool, ctx, tenant, "alice", "bob", "eve")
+
+	recorder := &recordingPublisher{}
+
+	service := NewService(repository, nil, nil, recorder)
+
+	alice := auth.Identity{TenantID: tenant, UserID: "alice"}
+	eve := auth.Identity{TenantID: tenant, UserID: "eve"}
+
+	detail, err := service.CreateGroup(ctx, CreateGroupInput{
+		Identity:  alice,
+		Title:     "typing",
+		MemberIDs: []string{"bob"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.SetTyping(ctx, TypingInput{
+		Identity:       alice,
+		ConversationID: detail.ID,
+		Typing:         true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("published %d events, want 1", len(recorder.events))
+	}
+
+	event := recorder.events[0]
+
+	if event.Kind != EventTyping ||
+		event.TenantID != tenant ||
+		event.ConversationID != detail.ID ||
+		event.ActorUserID != "alice" ||
+		!event.Typing {
+		t.Fatalf("typing event = %+v", event)
+	}
+
+	// A workspace member outside the conversation cannot emit indicators.
+	if err := service.SetTyping(ctx, TypingInput{
+		Identity:       eve,
+		ConversationID: detail.ID,
+		Typing:         true,
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-member typing error = %v, want ErrForbidden", err)
+	}
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("non-member typing was published: %+v", recorder.events)
+	}
+}
+
+func TestHubTypingAndPresence(t *testing.T) {
+	repository, pool, ctx := integrationChatRepository(t)
+
+	const tenant = "tenant-a"
+
+	addTenantMembers(t, pool, ctx, tenant, "alice", "bob")
+
+	detail, err := repository.CreateGroupConversation(
+		ctx,
+		CreateGroupConversationParams{
+			ID:              uuid.NewString(),
+			TenantID:        tenant,
+			Title:           "presence",
+			CreatedByUserID: "alice",
+			MemberIDs:       []string{"bob"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hub := NewHub(repository)
+
+	bobClient := &wsClient{
+		tenantID: tenant,
+		userID:   "bob",
+		send:     make(chan []byte, 8),
+	}
+
+	aliceClient := &wsClient{
+		tenantID: tenant,
+		userID:   "alice",
+		send:     make(chan []byte, 8),
+	}
+
+	hub.Register(ctx, bobClient)
+	t.Cleanup(func() {
+		hub.Unregister(ctx, bobClient)
+	})
+
+	// Bob was already online, so Alice's first connection produces his
+	// presence.online frame.
+	hub.Register(ctx, aliceClient)
+
+	online := readClientEvent(t, bobClient.send)
+	if online.Type != string(EventPresenceOnline) || online.UserID != "alice" {
+		t.Fatalf("online event = %+v", online)
+	}
+
+	hub.HandleEvent(ctx, Event{
+		Kind:           EventTyping,
+		TenantID:       tenant,
+		ConversationID: detail.ID,
+		ActorUserID:    "alice",
+		Typing:         true,
+	})
+
+	started := readClientEvent(t, bobClient.send)
+	if started.Type != string(EventTyping) ||
+		started.UserID != "alice" ||
+		started.Typing == nil ||
+		!*started.Typing {
+		t.Fatalf("typing start = %+v", started)
+	}
+
+	hub.HandleEvent(ctx, Event{
+		Kind:           EventTyping,
+		TenantID:       tenant,
+		ConversationID: detail.ID,
+		ActorUserID:    "alice",
+		Typing:         false,
+	})
+
+	stopped := readClientEvent(t, bobClient.send)
+	if stopped.Type != string(EventTyping) ||
+		stopped.Typing == nil ||
+		*stopped.Typing {
+		t.Fatalf("typing stop = %+v", stopped)
+	}
+
+	// The typist never receives their own indicator.
+	assertNoFrame(t, aliceClient.send)
+
+	hub.Unregister(ctx, aliceClient)
+
+	offline := readClientEvent(t, bobClient.send)
+	if offline.Type != string(EventPresenceOffline) || offline.UserID != "alice" {
+		t.Fatalf("offline event = %+v", offline)
+	}
+}
+
+type recordingPublisher struct {
+	events []Event
+}
+
+func (p *recordingPublisher) Publish(
+	_ context.Context,
+	event Event,
+) error {
+	p.events = append(p.events, event)
+
+	return nil
+}
+
+func readClientEvent(t *testing.T, frames <-chan []byte) ClientEvent {
+	t.Helper()
+
+	select {
+	case payload := <-frames:
+		var event ClientEvent
+
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatal(err)
+		}
+
+		return event
+
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for a client event")
+	}
+
+	return ClientEvent{}
+}
+
+func assertNoFrame(t *testing.T, frames <-chan []byte) {
+	t.Helper()
+
+	select {
+	case payload := <-frames:
+		t.Fatalf("unexpected frame: %s", payload)
+	default:
 	}
 }

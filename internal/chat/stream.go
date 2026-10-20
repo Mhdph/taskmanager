@@ -3,12 +3,15 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/mhdph/taskmanager/internal/auth"
 )
 
 const (
@@ -41,6 +44,10 @@ type wsClient struct {
 	cancel context.CancelFunc
 
 	closeOnce sync.Once
+
+	// onFrame handles text frames sent by the client. It runs on the read
+	// goroutine, so frame processing must stay short.
+	onFrame func(context.Context, []byte)
 }
 
 // Stream upgrades GET /chat/stream to a WebSocket. Authentication has
@@ -92,10 +99,23 @@ func (h *Handler) Stream(
 		send: make(chan []byte, wsSendBuffer),
 
 		cancel: cancel,
+
+		onFrame: h.clientFrameHandler(identity),
 	}
 
-	h.hub.Register(client)
-	defer h.hub.Unregister(client)
+	h.hub.Register(ctx, client)
+
+	defer func() {
+		// The request context may already be canceled when the peer has
+		// gone away; presence cleanup still needs to run.
+		presenceCtx, presenceCancel := context.WithTimeout(
+			context.Background(),
+			5*time.Second,
+		)
+		defer presenceCancel()
+
+		h.hub.Unregister(presenceCtx, client)
+	}()
 
 	hello, err := json.Marshal(ClientEvent{
 		Type: string(EventHello),
@@ -123,8 +143,61 @@ func (c *wsClient) readPump(ctx context.Context) {
 	for {
 		// Reading is mandatory: control frames (ping/pong/close) are only
 		// processed while a read is in flight.
-		if _, _, err := c.conn.Read(ctx); err != nil {
+		messageType, data, err := c.conn.Read(ctx)
+		if err != nil {
 			return
+		}
+
+		if messageType != websocket.MessageText || c.onFrame == nil {
+			continue
+		}
+
+		c.onFrame(ctx, data)
+	}
+}
+
+// clientFrameHandler decodes client frames. Typing is throttled before the
+// membership lookup so a chatty client cannot turn keystrokes into a stream
+// of database reads.
+func (h *Handler) clientFrameHandler(
+	identity auth.Identity,
+) func(context.Context, []byte) {
+	return func(ctx context.Context, data []byte) {
+		var frame clientFrame
+
+		if err := json.Unmarshal(data, &frame); err != nil {
+			log.Printf("chat stream: decode client frame: %v", err)
+			return
+		}
+
+		if frame.Type != string(EventTyping) ||
+			frame.ConversationID == "" {
+
+			return
+		}
+
+		allowed := h.typingLimiter.Allow(
+			identity.TenantID,
+			identity.UserID,
+			frame.ConversationID,
+			frame.Typing,
+		)
+		if !allowed {
+			return
+		}
+
+		err := h.service.SetTyping(ctx, TypingInput{
+			Identity: identity,
+
+			ConversationID: frame.ConversationID,
+
+			Typing: frame.Typing,
+		})
+		if err != nil &&
+			!errors.Is(err, ErrForbidden) &&
+			!errors.Is(err, ErrConversationNotFound) {
+
+			log.Printf("chat stream: typing: %v", err)
 		}
 	}
 }
