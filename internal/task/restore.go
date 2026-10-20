@@ -18,7 +18,16 @@ import (
 	"github.com/mhdph/taskmanager/internal/project"
 )
 
-func (r *Repository) Restore(ctx context.Context, tenantID, projectID, taskID string) (Task, error) {
+// Restore unarchives a task. A task that belonged to a completed sprint
+// returns to the backlog instead, and the membership history records the
+// release.
+func (r *Repository) Restore(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	taskID string,
+	actorUserID string,
+) (Task, error) {
 	p, err := uuid.Parse(projectID)
 	if err != nil {
 		return Task{}, ErrInvalidID
@@ -27,13 +36,45 @@ func (r *Repository) Restore(ctx context.Context, tenantID, projectID, taskID st
 	if err != nil {
 		return Task{}, ErrInvalidID
 	}
-	row, err := r.queries.RestoreTask(ctx, db.RestoreTaskParams{TenantID: tenantID, ProjectID: pgtype.UUID{Bytes: p, Valid: true}, ID: pgtype.UUID{Bytes: id, Valid: true}})
+
+	projectUUID := pgtype.UUID{Bytes: p, Valid: true}
+	taskUUID := pgtype.UUID{Bytes: id, Valid: true}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Task{}, fmt.Errorf("begin task restore: %w", err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	queries := r.queries.WithTx(tx)
+
+	if err := queries.RecordSprintReleaseOnRestore(ctx, db.RecordSprintReleaseOnRestoreParams{
+		ID:          pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ActorUserID: actorUserID,
+		TenantID:    tenantID,
+		ProjectID:   projectUUID,
+		TaskID:      taskUUID,
+	}); err != nil {
+		return Task{}, fmt.Errorf("record sprint release: %w", err)
+	}
+
+	row, err := queries.RestoreTask(ctx, db.RestoreTaskParams{
+		TenantID:  tenantID,
+		ProjectID: projectUUID,
+		ID:        taskUUID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrTaskNotFound
 	}
 	if err != nil {
 		return Task{}, fmt.Errorf("restore task: %w", err)
 	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, fmt.Errorf("commit task restore: %w", err)
+	}
+
 	return taskFromDB(row), nil
 }
 
@@ -44,7 +85,13 @@ func (s *Service) Restore(ctx context.Context, identity auth.Identity, projectID
 	if _, err := s.projectRepository.GetForTenant(ctx, identity.TenantID, projectID); err != nil {
 		return Task{}, err
 	}
-	item, err := s.repository.Restore(ctx, identity.TenantID, projectID, taskID)
+	item, err := s.repository.Restore(
+		ctx,
+		identity.TenantID,
+		projectID,
+		taskID,
+		identity.UserID,
+	)
 	if err != nil {
 		return Task{}, err
 	}

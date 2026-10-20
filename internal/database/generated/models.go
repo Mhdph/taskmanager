@@ -173,6 +173,65 @@ type ProjectStatus struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Sprint struct {
+	ID              pgtype.UUID
+	TenantID        string
+	ProjectID       pgtype.UUID
+	Name            string
+	Goal            pgtype.Text
+	PlannedStartAt  pgtype.Timestamptz
+	PlannedEndAt    pgtype.Timestamptz
+	State           string
+	CreatedByUserID string
+	StartedAt       pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type SprintCommitment struct {
+	SprintID        pgtype.UUID
+	TenantID        string
+	TaskID          pgtype.UUID
+	Title           string
+	EstimateSeconds pgtype.Int8
+	Archived        bool
+	CreatedAt       pgtype.Timestamptz
+}
+
+type SprintReport struct {
+	SprintID                   pgtype.UUID
+	TenantID                   string
+	ProjectID                  pgtype.UUID
+	CompletedByUserID          string
+	CompletedAt                pgtype.Timestamptz
+	CommitmentTaskCount        int32
+	CommitmentEstimatedSeconds int64
+	CommitmentUnestimatedCount int32
+	AddedTaskCount             int32
+	AddedEstimatedSeconds      int64
+	RemovedTaskCount           int32
+	RemovedEstimatedSeconds    int64
+	CompletedTaskCount         int32
+	CompletedEstimatedSeconds  int64
+	CarryoverTaskCount         int32
+	CarryoverEstimatedSeconds  int64
+	ArchivedTaskCount          int32
+	UnestimatedTaskCount       int32
+	Tasks                      []byte
+}
+
+type SprintTaskMembership struct {
+	ID          pgtype.UUID
+	TenantID    string
+	ProjectID   pgtype.UUID
+	SprintID    pgtype.UUID
+	TaskID      pgtype.UUID
+	ActorUserID string
+	Action      string
+	CreatedAt   pgtype.Timestamptz
+}
+
 type Task struct {
 	ID              pgtype.UUID
 	TenantID        string
@@ -193,6 +252,7 @@ type Task struct {
 	Position        pgtype.Float8
 	EstimateSeconds pgtype.Int8
 	Recurrence      pgtype.Text
+	SprintID        pgtype.UUID
 }
 
 type TaskAttachment struct {

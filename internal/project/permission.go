@@ -42,4 +42,14 @@ const (
 	PermissionManageTaskAttachments Permission = "manage_task_attachments"
 
 	PermissionViewDashboard Permission = "view_dashboard"
+
+	// PermissionViewSprints allows reading sprints and their reports.
+	PermissionViewSprints Permission = "view_sprints"
+
+	// PermissionManageSprints allows creating, editing, starting,
+	// completing and deleting sprints.
+	PermissionManageSprints Permission = "manage_sprints"
+
+	// PermissionPlanTasks allows changing the sprint a task belongs to.
+	PermissionPlanTasks Permission = "plan_tasks"
 )

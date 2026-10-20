@@ -41,6 +41,12 @@ type WorkspaceListInput struct {
 	OverdueOnly   bool
 	CompletedOnly bool
 
+	// SprintID selects the tasks of one sprint.
+	SprintID string
+
+	// BacklogOnly selects the unfinished tasks without a sprint.
+	BacklogOnly bool
+
 	Sort   string
 	Desc   bool
 	Cursor string
@@ -152,6 +158,8 @@ func (s *Service) WorkspaceList(
 		OverdueOnly:   input.OverdueOnly,
 		CompletedOnly: input.CompletedOnly,
 
+		BacklogOnly: input.BacklogOnly,
+
 		Sort: sort,
 		Desc: desc,
 
@@ -163,6 +171,11 @@ func (s *Service) WorkspaceList(
 	if input.ProjectID != "" {
 		value := input.ProjectID
 		options.ProjectID = &value
+	}
+
+	if value := strings.TrimSpace(input.SprintID); value != "" {
+		sprintID := value
+		options.SprintID = &sprintID
 	}
 
 	switch strings.TrimSpace(input.Assignee) {

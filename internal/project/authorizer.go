@@ -94,7 +94,10 @@ func managerHasPermission(
 		PermissionManageTaskWatchers,
 		PermissionViewTaskAttachments,
 		PermissionManageTaskAttachments,
-		PermissionViewDashboard:
+		PermissionViewDashboard,
+		PermissionViewSprints,
+		PermissionManageSprints,
+		PermissionPlanTasks:
 		return true
 
 	default:
@@ -121,7 +124,9 @@ func memberHasPermission(
 		PermissionManageTaskWatchers,
 		PermissionViewTaskAttachments,
 		PermissionManageTaskAttachments,
-		PermissionViewDashboard:
+		PermissionViewDashboard,
+		PermissionViewSprints,
+		PermissionPlanTasks:
 		return true
 
 	default:
@@ -140,7 +145,8 @@ func viewerHasPermission(
 		PermissionViewTasks,
 		PermissionViewTaskDependencies,
 		PermissionViewTaskWatchers,
-		PermissionViewDashboard:
+		PermissionViewDashboard,
+		PermissionViewSprints:
 		return true
 
 	default:

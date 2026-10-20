@@ -38,6 +38,9 @@ type Task struct {
 	Position        *float64
 	EstimateSeconds *int64
 
+	// SprintID is the sprint the task is planned in. Nil means backlog.
+	SprintID *string
+
 	// Recurrence rule: daily | weekly | biweekly | monthly.
 	Recurrence *string
 
@@ -65,6 +68,12 @@ type ListOptions struct {
 	Priority       *Priority
 	ParentTaskID   *string
 	Search         *string
+
+	// SprintID selects the tasks of one sprint.
+	SprintID *string
+
+	// BacklogOnly selects the unfinished tasks without a sprint.
+	BacklogOnly bool
 }
 
 type TaskPage struct {
@@ -116,6 +125,12 @@ type MyWorkOptions struct {
 	DueTo   *time.Time
 
 	OverdueOnly bool
+
+	// SprintID selects the tasks of one sprint.
+	SprintID *string
+
+	// BacklogOnly selects the unfinished tasks without a sprint.
+	BacklogOnly bool
 }
 
 type MyWorkPage struct {

@@ -322,6 +322,14 @@ func taskFromDB(
 		task.DueAt = &value
 	}
 
+	if row.SprintID.Valid {
+		value := uuid.UUID(
+			row.SprintID.Bytes,
+		).String()
+
+		task.SprintID = &value
+	}
+
 	if row.CompletedAt.Valid {
 		value := row.CompletedAt.Time
 		task.CompletedAt = &value
@@ -489,6 +497,31 @@ func (r *Repository) ListForProject(
 		}
 	}
 
+	var sprintID pgtype.UUID
+
+	if options.SprintID != nil {
+		value, err := uuid.Parse(
+			*options.SprintID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"%w: %v",
+				ErrInvalidID,
+				err,
+			)
+		}
+
+		sprintID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	backlogOnly := pgtype.Bool{
+		Bool:  options.BacklogOnly,
+		Valid: true,
+	}
+
 	var cursorCreatedAt pgtype.Timestamptz
 	var cursorID pgtype.UUID
 
@@ -531,6 +564,9 @@ func (r *Repository) ListForProject(
 			Priority:       priority,
 			ParentTaskID:   parentTaskID,
 			Search:         search,
+
+			SprintID:    sprintID,
+			BacklogOnly: backlogOnly,
 
 			CursorCreatedAt: cursorCreatedAt,
 			CursorID:        cursorID,
@@ -1882,6 +1918,31 @@ func (r *Repository) ListMyWork(
 		Valid: true,
 	}
 
+	var sprintID pgtype.UUID
+
+	if options.SprintID != nil {
+		value, err := uuid.Parse(
+			*options.SprintID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"%w: %v",
+				ErrInvalidID,
+				err,
+			)
+		}
+
+		sprintID = pgtype.UUID{
+			Bytes: value,
+			Valid: true,
+		}
+	}
+
+	backlogOnly := pgtype.Bool{
+		Bool:  options.BacklogOnly,
+		Valid: true,
+	}
+
 	rows, err := r.queries.ListMyWorkTasks(
 		ctx,
 		db.ListMyWorkTasksParams{
@@ -1903,6 +1964,9 @@ func (r *Repository) ListMyWork(
 			DueTo: dueTo,
 
 			OverdueOnly: overdueOnly,
+
+			SprintID:    sprintID,
+			BacklogOnly: backlogOnly,
 
 			CursorCreatedAt: cursorCreatedAt,
 

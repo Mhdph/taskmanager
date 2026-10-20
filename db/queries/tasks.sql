@@ -88,6 +88,16 @@ WHERE
         )
 
     AND (
+            sqlc.narg(sprint_id)::uuid IS NULL
+            OR sprint_id = sqlc.narg(sprint_id)::uuid
+        )
+
+    AND (
+            sqlc.narg(backlog_only)::boolean IS NOT TRUE
+            OR (sprint_id IS NULL AND completed_at IS NULL)
+        )
+
+    AND (
             sqlc.narg(search)::text IS NULL
             OR title ILIKE '%' || sqlc.narg(search)::text || '%'
         )
@@ -429,6 +439,16 @@ WHERE
     )
 
     AND (
+        sqlc.narg(sprint_id)::uuid IS NULL
+        OR sprint_id = sqlc.narg(sprint_id)::uuid
+    )
+
+    AND (
+        sqlc.narg(backlog_only)::boolean IS NOT TRUE
+        OR (sprint_id IS NULL AND completed_at IS NULL)
+    )
+
+    AND (
         sqlc.narg(due_from)::timestamptz IS NULL
         OR due_at >= sqlc.narg(due_from)::timestamptz
     )
@@ -465,8 +485,24 @@ ORDER BY
 
 LIMIT sqlc.arg(page_limit);
 
+-- A restored task never returns to a completed sprint: an unfinished
+-- restored task goes back to the backlog.
 -- name: RestoreTask :one
-UPDATE tasks t SET archived_at = NULL, updated_at = NOW()
+UPDATE tasks t
+SET
+    archived_at = NULL,
+    sprint_id = CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM sprints s
+            WHERE s.id = t.sprint_id
+              AND s.tenant_id = t.tenant_id
+              AND s.project_id = t.project_id
+              AND s.state = 'completed'
+        ) THEN NULL
+        ELSE t.sprint_id
+    END,
+    updated_at = NOW()
 WHERE t.tenant_id = $1 AND t.project_id = $2 AND t.id = $3 AND t.archived_at IS NOT NULL
     AND EXISTS (SELECT 1 FROM projects p WHERE p.tenant_id = t.tenant_id AND p.id = t.project_id AND p.archived_at IS NULL)
 RETURNING t.*;
@@ -496,3 +532,35 @@ FROM projects
 WHERE tenant_id = $1
     AND id = $2
 FOR UPDATE;
+
+
+-- Restoring a task out of a completed sprint is a membership change too.
+-- name: RecordSprintReleaseOnRestore :exec
+INSERT INTO sprint_task_membership (
+    id,
+    tenant_id,
+    project_id,
+    sprint_id,
+    task_id,
+    actor_user_id,
+    action
+)
+SELECT
+    sqlc.arg(id),
+    t.tenant_id,
+    t.project_id,
+    t.sprint_id,
+    t.id,
+    sqlc.arg(actor_user_id),
+    'removed'
+FROM tasks t
+JOIN sprints s
+    ON s.id = t.sprint_id
+    AND s.tenant_id = t.tenant_id
+    AND s.project_id = t.project_id
+    AND s.state = 'completed'
+WHERE
+    t.tenant_id = sqlc.arg(tenant_id)
+    AND t.project_id = sqlc.arg(project_id)
+    AND t.id = sqlc.arg(task_id)
+    AND t.sprint_id IS NOT NULL;

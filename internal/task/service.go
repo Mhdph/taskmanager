@@ -333,6 +333,12 @@ type ListInput struct {
 	Priority       string
 	ParentTaskID   string
 	Search         string
+
+	// SprintID selects the tasks of one sprint.
+	SprintID string
+
+	// BacklogOnly selects the unfinished tasks without a sprint.
+	BacklogOnly bool
 }
 
 func (s *Service) List(
@@ -432,6 +438,12 @@ func (s *Service) List(
 		search = &value
 	}
 
+	var sprintID *string
+
+	if value := strings.TrimSpace(input.SprintID); value != "" {
+		sprintID = &value
+	}
+
 	options := ListOptions{
 		Archived: input.Archived,
 		Limit: int32(
@@ -445,6 +457,9 @@ func (s *Service) List(
 		Priority:       priority,
 		ParentTaskID:   parentTaskID,
 		Search:         search,
+
+		SprintID:    sprintID,
+		BacklogOnly: input.BacklogOnly,
 	}
 
 	tasks, err := s.repository.ListForProject(
@@ -2008,6 +2023,12 @@ type MyWorkInput struct {
 	DueTo   *time.Time
 
 	OverdueOnly bool
+
+	// SprintID selects the tasks of one sprint.
+	SprintID string
+
+	// BacklogOnly selects the unfinished tasks without a sprint.
+	BacklogOnly bool
 }
 
 func (s *Service) MyWork(
@@ -2077,6 +2098,12 @@ func (s *Service) MyWork(
 			ErrInvalidTaskDateRange
 	}
 
+	var myWorkSprintID *string
+
+	if value := strings.TrimSpace(input.SprintID); value != "" {
+		myWorkSprintID = &value
+	}
+
 	items, err := s.repository.ListMyWork(
 		ctx,
 		input.Identity.TenantID,
@@ -2097,6 +2124,9 @@ func (s *Service) MyWork(
 			DueTo: input.DueTo,
 
 			OverdueOnly: input.OverdueOnly,
+
+			SprintID:    myWorkSprintID,
+			BacklogOnly: input.BacklogOnly,
 		},
 	)
 

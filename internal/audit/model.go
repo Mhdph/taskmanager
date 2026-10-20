@@ -34,6 +34,14 @@ const (
 
 	ActionTaskWatcherAdded   Action = "task.watcher.added"
 	ActionTaskWatcherRemoved Action = "task.watcher.removed"
+
+	ActionSprintCreated   Action = "sprint.created"
+	ActionSprintUpdated   Action = "sprint.updated"
+	ActionSprintDeleted   Action = "sprint.deleted"
+	ActionSprintStarted   Action = "sprint.started"
+	ActionSprintCompleted Action = "sprint.completed"
+
+	ActionTaskSprintChanged Action = "task.sprint_changed"
 )
 
 type EntityType string
@@ -45,6 +53,7 @@ const (
 	EntityAttachment EntityType = "attachment"
 	EntityMember     EntityType = "project_member"
 	EntityDependency EntityType = "task_dependency"
+	EntitySprint     EntityType = "sprint"
 )
 
 type Entry struct {

@@ -112,6 +112,19 @@ func (h *Handler) WorkspaceList(
 		}
 	}
 
+	sprintID, backlogOnly, ok := parseSprintFilters(query)
+	if !ok {
+		http.Error(
+			w,
+			"invalid sprint filter",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	input.SprintID = sprintID
+	input.BacklogOnly = backlogOnly
+
 	parseTimeParam := func(
 		names ...string,
 	) (*time.Time, error) {

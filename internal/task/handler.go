@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -87,6 +89,10 @@ type taskResponse struct {
 	Position        *float64 `json:"position,omitempty"`
 	EstimateSeconds *int64   `json:"estimateSeconds,omitempty"`
 	Recurrence      *string  `json:"recurrence,omitempty"`
+
+	// SprintID is the sprint the task is planned in; null means
+	// backlog.
+	SprintID *string `json:"sprintId"`
 
 	Labels []Label `json:"labels,omitempty"`
 
@@ -299,6 +305,16 @@ func (h *Handler) List(
 		archived = parsed
 	}
 
+	sprintID, backlogOnly, ok := parseSprintFilters(query)
+	if !ok {
+		http.Error(
+			w,
+			"invalid sprint filter",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
 	page, err := h.service.List(
 		r.Context(),
 		ListInput{
@@ -328,6 +344,9 @@ func (h *Handler) List(
 			Search: query.Get(
 				"search",
 			),
+
+			SprintID:    sprintID,
+			BacklogOnly: backlogOnly,
 		},
 	)
 	if err != nil {
@@ -762,6 +781,8 @@ func toTaskResponse(
 		EstimateSeconds: task.EstimateSeconds,
 		Recurrence:      task.Recurrence,
 
+		SprintID: task.SprintID,
+
 		Labels: task.Labels,
 
 		CreatedByUserID: task.CreatedByUserID,
@@ -769,6 +790,34 @@ func toTaskResponse(
 		CreatedAt: task.CreatedAt,
 		UpdatedAt: task.UpdatedAt,
 	}
+}
+
+// parseSprintFilters reads the sprint filter of a task listing. The two
+// filters are mutually exclusive: a task is either in a sprint or in the
+// backlog, never both.
+func parseSprintFilters(
+	query url.Values,
+) (string, bool, bool) {
+	sprintID := strings.TrimSpace(
+		query.Get("sprintId"),
+	)
+
+	backlogOnly := false
+
+	if raw := query.Get("backlog"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return "", false, false
+		}
+
+		backlogOnly = parsed
+	}
+
+	if sprintID != "" && backlogOnly {
+		return "", false, false
+	}
+
+	return sprintID, backlogOnly, true
 }
 
 func parseNullableString(
@@ -2201,6 +2250,16 @@ func (h *Handler) MyWork(
 		limit = value
 	}
 
+	sprintID, backlogOnly, ok := parseSprintFilters(query)
+	if !ok {
+		http.Error(
+			w,
+			"invalid sprint filter",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
 	var dueFrom *time.Time
 
 	if raw :=
@@ -2286,6 +2345,9 @@ func (h *Handler) MyWork(
 				DueTo: dueTo,
 
 				OverdueOnly: overdueOnly,
+
+				SprintID:    sprintID,
+				BacklogOnly: backlogOnly,
 			},
 		)
 

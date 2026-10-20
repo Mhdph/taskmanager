@@ -28,6 +28,10 @@ func NewService(
 	}
 }
 
+// backlogFilterValue is the saved-view value that selects the tasks
+// without a sprint.
+const backlogFilterValue = "backlog"
+
 const (
 	// maxFilters caps the size of one saved view's filter list.
 	maxFilters = 10
@@ -52,6 +56,7 @@ var filterFields = map[string]struct{}{
 	"labels":   {},
 	"created":  {},
 	"updated":  {},
+	"sprint":   {},
 }
 
 var viewTypes = map[string]struct{}{
@@ -409,6 +414,19 @@ func validateFilters(
 					"%w: value too long",
 					ErrViewInvalidFilter,
 				)
+			}
+
+			// A sprint filter points at one sprint or at the backlog.
+			if filter.Field == "sprint" &&
+				value != backlogFilterValue {
+
+				if _, err := uuid.Parse(value); err != nil {
+					return nil, fmt.Errorf(
+						"%w: invalid sprint %q",
+						ErrViewInvalidFilter,
+						value,
+					)
+				}
 			}
 
 			values = append(

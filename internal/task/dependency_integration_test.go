@@ -19,6 +19,16 @@ import (
 
 func integrationTaskRepository(t *testing.T) (*Repository, *project.Repository, context.Context) {
 	t.Helper()
+
+	repository, projects, _, ctx := integrationTaskRepositoryWithPool(t)
+
+	return repository, projects, ctx
+}
+
+// integrationTaskRepositoryWithPool also returns the pool, for the tests
+// that need raw SQL next to the repository.
+func integrationTaskRepositoryWithPool(t *testing.T) (*Repository, *project.Repository, *pgxpool.Pool, context.Context) {
+	t.Helper()
 	url := os.Getenv("TASKMANAGER_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TASKMANAGER_TEST_DATABASE_URL is not set")
@@ -60,7 +70,11 @@ func integrationTaskRepository(t *testing.T) (*Repository, *project.Repository, 
 		}
 	}
 	queries := db.New(pool)
-	return NewRepository(pool, queries), project.NewRepository(pool, queries), ctx
+
+	repository := NewRepository(pool, queries)
+	projects := project.NewRepository(pool, queries)
+
+	return repository, projects, pool, ctx
 }
 
 func TestConcurrentInverseDependenciesCannotBothCommit(t *testing.T) {

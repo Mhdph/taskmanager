@@ -238,6 +238,43 @@ roles control access; user IDs in application payloads do not replace authentica
     ten minutes are left alone, which protects an upload that has not been
     written to the database yet, and objects outside the attachment layout
     are never touched.
+- Sprints under `/projects/{projectID}/sprints`: a project keeps its planning
+  in sprints with an explicit `planned -> active -> completed` lifecycle.
+  Starting and completing are explicit actions; the planned end date never
+  closes a sprint by itself. A project has at most one active sprint
+  (enforced by the database) and any number of planned or completed ones.
+  - `GET /sprints?state=planned|active|completed` lists the sprints,
+    `POST /sprints` creates a planned one (`name`, optional `goal`,
+    `plannedStartAt`, `plannedEndAt`).
+  - `GET /sprints/{sprintID}` returns the sprint with its live totals,
+    `PATCH /sprints/{sprintID}` edits it and `DELETE /sprints/{sprintID}`
+    removes a planned sprint and returns its tasks to the backlog. A planned
+    sprint is fully editable, an active sprint only accepts a new name,
+    goal or planned end date, and a completed sprint is immutable.
+  - `POST /sprints/{sprintID}/start` starts the sprint and snapshots the
+    tasks it committed to. `POST /sprints/{sprintID}/complete` freezes the
+    report and moves the unfinished work to `carryoverSprintId` (a planned
+    sprint of the same project) or back to the backlog when it is null.
+    Repeating either action returns the existing result and never carries
+    work over twice; an impossible transition is a `409`.
+  - `GET /sprints/{sprintID}/report` returns the live summary of a planned
+    or active sprint and the frozen report of a completed one. The report
+    separates the initial commitment, the work added and removed while the
+    sprint ran, the completed work, the unfinished carryover and the
+    archived work, and it counts each task's own estimate once.
+  - `PUT /projects/{projectID}/tasks/{taskID}/sprint` with
+    `{"sprintId": "<uuid>"}` plans a task into a sprint and
+    `{"sprintId": null}` returns it to the backlog. Task assignment has its
+    own endpoint so the planning rules live in one place. Only unfinished,
+    non-archived tasks can be moved; finished tasks keep the sprint they
+    were completed in, and archived tasks keep their assignment for
+    traceability. Moving a task never moves its subtasks.
+  - Task listings accept `?sprintId=<uuid>` and `?backlog=true` (the
+    unfinished tasks without a sprint) on the project list, the workspace
+    list and My Work; using both at once is a `400`. Saved views can
+    persist a `sprint` filter with a sprint id or the value `backlog`.
+  - Permissions: managers administer sprints, members change the task
+    membership, viewers read them.
 - Time tracking under `/projects/{projectID}/tasks/{taskID}/time-entries`:
   `POST /start`, `POST /stop`, `GET /`, `DELETE /{entryID}`. Each user has one active
   timer per tenant. Only the owner can stop a timer or delete their completed entry.

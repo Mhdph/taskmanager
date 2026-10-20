@@ -28,6 +28,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
 	"github.com/mhdph/taskmanager/internal/search"
+	"github.com/mhdph/taskmanager/internal/sprint"
 	"github.com/mhdph/taskmanager/internal/storage"
 	"github.com/mhdph/taskmanager/internal/storagegc"
 	"github.com/mhdph/taskmanager/internal/task"
@@ -349,6 +350,26 @@ func main() {
 
 	taskHandler := task.NewHandler(
 		taskService,
+	)
+
+	// -------------------------------------------------------------------------
+	// Sprint module
+	// -------------------------------------------------------------------------
+
+	sprintRepository := sprint.NewRepository(
+		pool,
+		queries,
+	)
+
+	sprintService := sprint.NewService(
+		sprintRepository,
+		projectRepository,
+		projectAuthorizer,
+		auditRepository,
+	)
+
+	sprintHandler := sprint.NewHandler(
+		sprintService,
 	)
 
 	// -------------------------------------------------------------------------
@@ -854,6 +875,19 @@ func main() {
 				r.Delete("/{statusID}", projectHandler.DeleteStatus)
 			})
 
+			r.Route("/sprints", func(r chi.Router) {
+				r.Get("/", sprintHandler.List)
+				r.Post("/", sprintHandler.Create)
+
+				r.Get("/{sprintID}", sprintHandler.Get)
+				r.Patch("/{sprintID}", sprintHandler.Update)
+				r.Delete("/{sprintID}", sprintHandler.Delete)
+
+				r.Post("/{sprintID}/start", sprintHandler.Start)
+				r.Post("/{sprintID}/complete", sprintHandler.Complete)
+				r.Get("/{sprintID}/report", sprintHandler.Report)
+			})
+
 			r.Route("/views", func(r chi.Router) {
 				r.Get("/", viewHandler.List)
 				r.Post("/", viewHandler.Create)
@@ -878,6 +912,10 @@ func main() {
 					r.Delete("/", taskHandler.Archive)
 					r.Post("/restore", taskHandler.Restore)
 					r.Post("/claim", taskHandler.Claim)
+
+					// Sprint assignment has its own endpoint: the sprint
+					// module owns the planning rules.
+					r.Put("/sprint", sprintHandler.SetTaskSprint)
 
 					r.Route("/labels", func(r chi.Router) {
 						r.Get("/", taskHandler.GetTaskLabels)

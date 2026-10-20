@@ -85,6 +85,12 @@ type WorkspaceListOptions struct {
 	OverdueOnly   bool
 	CompletedOnly bool
 
+	// SprintID selects the tasks of one sprint.
+	SprintID *string
+
+	// BacklogOnly selects the unfinished tasks without a sprint.
+	BacklogOnly bool
+
 	Sort   WorkspaceSort
 	Desc   bool
 	Cursor *WorkspaceCursor
@@ -182,6 +188,28 @@ func (r *Repository) ListForTenant(
 				"t.assignee_user_id = %s",
 				add(*options.AssigneeUserID),
 			),
+		)
+	}
+
+	if options.SprintID != nil {
+		sprintID, err := parseUUIDParam(*options.SprintID)
+		if err != nil {
+			return nil, err
+		}
+
+		where = append(
+			where,
+			fmt.Sprintf(
+				"t.sprint_id = %s",
+				add(sprintID),
+			),
+		)
+	}
+
+	if options.BacklogOnly {
+		where = append(
+			where,
+			"t.sprint_id IS NULL AND t.completed_at IS NULL",
 		)
 	}
 
@@ -370,6 +398,7 @@ func workspaceColumns() string {
     t.position,
     t.estimate_seconds,
     t.recurrence,
+    t.sprint_id,
     s.name AS status_name,
     s.category AS status_category,
     p.name AS project_name,
@@ -644,6 +673,7 @@ func scanWorkspaceTasks(
 			&dbTask.Position,
 			&dbTask.EstimateSeconds,
 			&dbTask.Recurrence,
+			&dbTask.SprintID,
 			&statusName,
 			&statusCategory,
 			&projectName,
