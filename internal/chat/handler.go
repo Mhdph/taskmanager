@@ -12,6 +12,7 @@ import (
 
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/httpx"
+	"github.com/mhdph/taskmanager/internal/storage"
 )
 
 type Handler struct {
@@ -231,6 +232,10 @@ type sendMessageRequest struct {
 	// ClientMessageID makes retries idempotent: resending with the same id
 	// returns the original message instead of creating a duplicate.
 	ClientMessageID *string `json:"clientMessageId"`
+
+	// AttachmentIDs binds pending uploads to this message. The body may be
+	// empty when attachments are present.
+	AttachmentIDs []string `json:"attachmentIds"`
 }
 
 type editMessageRequest struct {
@@ -562,6 +567,8 @@ func (h *Handler) SendMessage(
 			Body: req.Body,
 
 			ClientMessageID: req.ClientMessageID,
+
+			AttachmentIDs: req.AttachmentIDs,
 		},
 	)
 	if err != nil {
@@ -679,6 +686,158 @@ func (h *Handler) DeleteMessage(
 	); err != nil {
 		log.Printf(
 			"encode deleted message: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) UploadAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(
+		w,
+		r.Body,
+		h.service.UploadRequestLimit(),
+	)
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+
+		if errors.As(err, &maxErr) {
+			http.Error(
+				w,
+				"request body too large",
+				http.StatusRequestEntityTooLarge,
+			)
+			return
+		}
+
+		http.Error(
+			w,
+			"invalid multipart form",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(
+			w,
+			"file is required",
+			http.StatusBadRequest,
+		)
+		return
+	}
+	defer file.Close()
+
+	attachment, err := h.service.UploadAttachment(
+		r.Context(),
+		UploadAttachmentInput{
+			Identity: identity,
+
+			ConversationID: chi.URLParam(r, "conversationID"),
+
+			Filename: header.Filename,
+
+			ContentType: header.Header.Get("Content-Type"),
+
+			Size: header.Size,
+
+			Reader: file,
+		},
+	)
+	if err != nil {
+		h.writeError(w, "upload attachment", err)
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(http.StatusCreated)
+
+	if err := json.NewEncoder(w).Encode(
+		NewWireAttachment(attachment),
+	); err != nil {
+		log.Printf(
+			"encode uploaded attachment: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) CancelAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	err := h.service.CancelAttachment(
+		r.Context(),
+		identity,
+		chi.URLParam(r, "conversationID"),
+		chi.URLParam(r, "attachmentID"),
+	)
+	if err != nil {
+		h.writeError(w, "cancel attachment", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type attachmentDownloadResponse struct {
+	URL string `json:"url"`
+
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func (h *Handler) DownloadAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	download, err := h.service.GetAttachmentDownload(
+		r.Context(),
+		identity,
+		chi.URLParam(r, "conversationID"),
+		chi.URLParam(r, "attachmentID"),
+	)
+	if err != nil {
+		h.writeError(w, "download attachment", err)
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		attachmentDownloadResponse{
+			URL: download.URL,
+
+			ExpiresAt: download.ExpiresAt,
+		},
+	); err != nil {
+		log.Printf(
+			"encode attachment download: %v",
 			err,
 		)
 	}
@@ -849,7 +1008,10 @@ func (h *Handler) writeError(
 		errors.Is(err, ErrTooManyMembers),
 		errors.Is(err, ErrInvalidReadCursor),
 		errors.Is(err, ErrInvalidBody),
-		errors.Is(err, ErrInvalidClientMessageID):
+		errors.Is(err, ErrInvalidClientMessageID),
+		errors.Is(err, ErrInvalidAttachment),
+		errors.Is(err, ErrInvalidAttachmentFilename),
+		errors.Is(err, ErrTooManyAttachments):
 
 		http.Error(
 			w,
@@ -860,7 +1022,8 @@ func (h *Handler) writeError(
 	case errors.Is(err, ErrConversationNotFound),
 		errors.Is(err, ErrProjectNotFound),
 		errors.Is(err, ErrMemberNotFound),
-		errors.Is(err, ErrMessageNotFound):
+		errors.Is(err, ErrMessageNotFound),
+		errors.Is(err, ErrAttachmentNotFound):
 
 		http.Error(
 			w,
@@ -877,6 +1040,30 @@ func (h *Handler) writeError(
 			w,
 			err.Error(),
 			http.StatusForbidden,
+		)
+
+	case errors.Is(err, ErrAttachmentTooLarge):
+
+		http.Error(
+			w,
+			err.Error(),
+			http.StatusRequestEntityTooLarge,
+		)
+
+	case errors.Is(err, ErrAttachmentAttached):
+
+		http.Error(
+			w,
+			err.Error(),
+			http.StatusConflict,
+		)
+
+	case errors.Is(err, storage.ErrStorageDisabled):
+
+		http.Error(
+			w,
+			"attachment storage is unavailable",
+			http.StatusServiceUnavailable,
 		)
 
 	default:

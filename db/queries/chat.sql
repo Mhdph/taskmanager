@@ -368,3 +368,94 @@ WHERE
     AND kind = 'user'
     AND deleted_at IS NULL
 RETURNING *;
+
+
+-- Attachments
+
+-- name: CreateChatAttachment :one
+INSERT INTO message_attachments (
+    id,
+    tenant_id,
+    conversation_id,
+    uploaded_by_user_id,
+    filename,
+    content_type,
+    size_bytes,
+    object_key
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8
+)
+RETURNING *;
+
+
+-- name: GetChatAttachment :one
+SELECT *
+FROM message_attachments
+WHERE
+    tenant_id = $1
+    AND conversation_id = $2
+    AND id = $3
+    AND deleted_at IS NULL;
+
+
+-- name: ListChatAttachmentsByMessages :many
+SELECT *
+FROM message_attachments
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND conversation_id = sqlc.arg(conversation_id)::uuid
+    AND message_id = ANY(sqlc.arg(message_ids)::uuid[])
+    AND deleted_at IS NULL
+ORDER BY created_at ASC, id ASC;
+
+
+-- name: AttachChatAttachmentsToMessage :execrows
+UPDATE message_attachments
+SET message_id = sqlc.arg(message_id)::uuid
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND conversation_id = sqlc.arg(conversation_id)::uuid
+    AND uploaded_by_user_id = sqlc.arg(uploaded_by_user_id)::text
+    AND message_id IS NULL
+    AND deleted_at IS NULL
+    AND id = ANY(sqlc.arg(attachment_ids)::uuid[]);
+
+
+-- name: SoftDeleteChatMessageAttachments :many
+UPDATE message_attachments
+SET deleted_at = NOW()
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND conversation_id = sqlc.arg(conversation_id)::uuid
+    AND message_id = sqlc.arg(message_id)::uuid
+    AND deleted_at IS NULL
+RETURNING *;
+
+
+-- name: DeletePendingChatAttachment :execrows
+DELETE FROM message_attachments
+WHERE
+    tenant_id = $1
+    AND conversation_id = $2
+    AND id = $3
+    AND uploaded_by_user_id = $4
+    AND message_id IS NULL;
+
+
+-- name: ListStalePendingChatAttachments :many
+SELECT *
+FROM message_attachments
+WHERE
+    message_id IS NULL
+    AND deleted_at IS NULL
+    AND created_at < sqlc.arg(created_before)::timestamptz
+ORDER BY created_at ASC
+LIMIT sqlc.arg(page_limit);

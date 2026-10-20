@@ -265,7 +265,7 @@ func TestPostgresBrokerPublishesTransactionalEvents(t *testing.T) {
 		t.Fatalf("edit event = %+v", editEvent)
 	}
 
-	if _, err := publisherRepository.DeleteMessage(
+	if _, _, err := publisherRepository.DeleteMessage(
 		ctx,
 		tenant,
 		detail.ID,
@@ -318,6 +318,20 @@ func TestHubHydratesAndRoutesEvents(t *testing.T) {
 
 	alice := "alice"
 
+	attachment, err := repository.CreateAttachment(ctx, CreateAttachmentParams{
+		ID:               uuid.NewString(),
+		TenantID:         tenant,
+		ConversationID:   detail.ID,
+		UploadedByUserID: "alice",
+		Filename:         "fanout.txt",
+		ContentType:      "text/plain",
+		SizeBytes:        7,
+		ObjectKey:        "tests/" + uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	message, _, err := repository.CreateMessage(ctx, CreateMessageParams{
 		ID:             uuid.NewString(),
 		TenantID:       tenant,
@@ -325,6 +339,7 @@ func TestHubHydratesAndRoutesEvents(t *testing.T) {
 		Kind:           MessageKindUser,
 		AuthorUserID:   &alice,
 		Body:           "fan out",
+		AttachmentIDs:  []string{attachment.ID},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -371,6 +386,13 @@ func TestHubHydratesAndRoutesEvents(t *testing.T) {
 	}
 	if event.Message == nil || event.Message.ID != message.ID || event.Message.Body != "fan out" {
 		t.Fatalf("event message = %+v", event.Message)
+	}
+	if len(event.Message.Attachments) != 1 ||
+		event.Message.Attachments[0].Filename != "fanout.txt" {
+		t.Fatalf(
+			"event attachments = %+v, want the hydrated attachment",
+			event.Message.Attachments,
+		)
 	}
 	if event.Seq != message.Seq || event.ConversationID != detail.ID {
 		t.Fatalf("event routing = %+v", event)
@@ -430,7 +452,7 @@ func TestServiceTypingAuthorizationAndPublish(t *testing.T) {
 
 	recorder := &recordingPublisher{}
 
-	service := NewService(repository, nil, nil, recorder)
+	service := NewService(repository, nil, nil, recorder, nil, 0)
 
 	alice := auth.Identity{TenantID: tenant, UserID: "alice"}
 	eve := auth.Identity{TenantID: tenant, UserID: "eve"}

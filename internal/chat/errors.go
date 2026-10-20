@@ -63,6 +63,30 @@ var (
 		"invalid client message id",
 	)
 
+	ErrInvalidAttachment = errors.New(
+		"invalid attachment",
+	)
+
+	ErrInvalidAttachmentFilename = errors.New(
+		"invalid attachment filename",
+	)
+
+	ErrAttachmentTooLarge = errors.New(
+		"attachment too large",
+	)
+
+	ErrTooManyAttachments = errors.New(
+		"too many attachments",
+	)
+
+	ErrAttachmentNotFound = errors.New(
+		"attachment not found",
+	)
+
+	ErrAttachmentAttached = errors.New(
+		"attachment already attached to a message",
+	)
+
 	ErrInvalidCursor = errors.New(
 		"invalid message cursor",
 	)

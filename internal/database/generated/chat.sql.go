@@ -46,6 +46,40 @@ func (q *Queries) AddConversationMember(ctx context.Context, arg AddConversation
 	return err
 }
 
+const attachChatAttachmentsToMessage = `-- name: AttachChatAttachmentsToMessage :execrows
+UPDATE message_attachments
+SET message_id = $1::uuid
+WHERE
+    tenant_id = $2::text
+    AND conversation_id = $3::uuid
+    AND uploaded_by_user_id = $4::text
+    AND message_id IS NULL
+    AND deleted_at IS NULL
+    AND id = ANY($5::uuid[])
+`
+
+type AttachChatAttachmentsToMessageParams struct {
+	MessageID        pgtype.UUID
+	TenantID         string
+	ConversationID   pgtype.UUID
+	UploadedByUserID string
+	AttachmentIds    []pgtype.UUID
+}
+
+func (q *Queries) AttachChatAttachmentsToMessage(ctx context.Context, arg AttachChatAttachmentsToMessageParams) (int64, error) {
+	result, err := q.db.Exec(ctx, attachChatAttachmentsToMessage,
+		arg.MessageID,
+		arg.TenantID,
+		arg.ConversationID,
+		arg.UploadedByUserID,
+		arg.AttachmentIds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bumpConversationLastMessage = `-- name: BumpConversationLastMessage :exec
 UPDATE conversations
 SET
@@ -75,6 +109,71 @@ func (q *Queries) BumpConversationLastMessage(ctx context.Context, arg BumpConve
 		arg.ID,
 	)
 	return err
+}
+
+const createChatAttachment = `-- name: CreateChatAttachment :one
+
+INSERT INTO message_attachments (
+    id,
+    tenant_id,
+    conversation_id,
+    uploaded_by_user_id,
+    filename,
+    content_type,
+    size_bytes,
+    object_key
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8
+)
+RETURNING id, tenant_id, conversation_id, message_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+`
+
+type CreateChatAttachmentParams struct {
+	ID               pgtype.UUID
+	TenantID         string
+	ConversationID   pgtype.UUID
+	UploadedByUserID string
+	Filename         string
+	ContentType      string
+	SizeBytes        int64
+	ObjectKey        string
+}
+
+// Attachments
+func (q *Queries) CreateChatAttachment(ctx context.Context, arg CreateChatAttachmentParams) (MessageAttachment, error) {
+	row := q.db.QueryRow(ctx, createChatAttachment,
+		arg.ID,
+		arg.TenantID,
+		arg.ConversationID,
+		arg.UploadedByUserID,
+		arg.Filename,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.ObjectKey,
+	)
+	var i MessageAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ConversationID,
+		&i.MessageID,
+		&i.UploadedByUserID,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.ObjectKey,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const createChatMessage = `-- name: CreateChatMessage :one
@@ -339,6 +438,36 @@ func (q *Queries) DeleteChatMessage(ctx context.Context, arg DeleteChatMessagePa
 	return i, err
 }
 
+const deletePendingChatAttachment = `-- name: DeletePendingChatAttachment :execrows
+DELETE FROM message_attachments
+WHERE
+    tenant_id = $1
+    AND conversation_id = $2
+    AND id = $3
+    AND uploaded_by_user_id = $4
+    AND message_id IS NULL
+`
+
+type DeletePendingChatAttachmentParams struct {
+	TenantID         string
+	ConversationID   pgtype.UUID
+	ID               pgtype.UUID
+	UploadedByUserID string
+}
+
+func (q *Queries) DeletePendingChatAttachment(ctx context.Context, arg DeletePendingChatAttachmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePendingChatAttachment,
+		arg.TenantID,
+		arg.ConversationID,
+		arg.ID,
+		arg.UploadedByUserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const editChatMessage = `-- name: EditChatMessage :one
 UPDATE messages
 SET
@@ -379,6 +508,41 @@ func (q *Queries) EditChatMessage(ctx context.Context, arg EditChatMessageParams
 		&i.ClientMessageID,
 		&i.CreatedAt,
 		&i.EditedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getChatAttachment = `-- name: GetChatAttachment :one
+SELECT id, tenant_id, conversation_id, message_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+FROM message_attachments
+WHERE
+    tenant_id = $1
+    AND conversation_id = $2
+    AND id = $3
+    AND deleted_at IS NULL
+`
+
+type GetChatAttachmentParams struct {
+	TenantID       string
+	ConversationID pgtype.UUID
+	ID             pgtype.UUID
+}
+
+func (q *Queries) GetChatAttachment(ctx context.Context, arg GetChatAttachmentParams) (MessageAttachment, error) {
+	row := q.db.QueryRow(ctx, getChatAttachment, arg.TenantID, arg.ConversationID, arg.ID)
+	var i MessageAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ConversationID,
+		&i.MessageID,
+		&i.UploadedByUserID,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.ObjectKey,
+		&i.CreatedAt,
 		&i.DeletedAt,
 	)
 	return i, err
@@ -552,6 +716,55 @@ func (q *Queries) GetProjectConversation(ctx context.Context, arg GetProjectConv
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listChatAttachmentsByMessages = `-- name: ListChatAttachmentsByMessages :many
+SELECT id, tenant_id, conversation_id, message_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+FROM message_attachments
+WHERE
+    tenant_id = $1::text
+    AND conversation_id = $2::uuid
+    AND message_id = ANY($3::uuid[])
+    AND deleted_at IS NULL
+ORDER BY created_at ASC, id ASC
+`
+
+type ListChatAttachmentsByMessagesParams struct {
+	TenantID       string
+	ConversationID pgtype.UUID
+	MessageIds     []pgtype.UUID
+}
+
+func (q *Queries) ListChatAttachmentsByMessages(ctx context.Context, arg ListChatAttachmentsByMessagesParams) ([]MessageAttachment, error) {
+	rows, err := q.db.Query(ctx, listChatAttachmentsByMessages, arg.TenantID, arg.ConversationID, arg.MessageIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessageAttachment
+	for rows.Next() {
+		var i MessageAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConversationID,
+			&i.MessageID,
+			&i.UploadedByUserID,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.ObjectKey,
+			&i.CreatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listChatConversationIDsForUser = `-- name: ListChatConversationIDsForUser :many
@@ -857,6 +1070,54 @@ func (q *Queries) ListConversationsForUser(ctx context.Context, arg ListConversa
 	return items, nil
 }
 
+const listStalePendingChatAttachments = `-- name: ListStalePendingChatAttachments :many
+SELECT id, tenant_id, conversation_id, message_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+FROM message_attachments
+WHERE
+    message_id IS NULL
+    AND deleted_at IS NULL
+    AND created_at < $1::timestamptz
+ORDER BY created_at ASC
+LIMIT $2
+`
+
+type ListStalePendingChatAttachmentsParams struct {
+	CreatedBefore pgtype.Timestamptz
+	PageLimit     int32
+}
+
+func (q *Queries) ListStalePendingChatAttachments(ctx context.Context, arg ListStalePendingChatAttachmentsParams) ([]MessageAttachment, error) {
+	rows, err := q.db.Query(ctx, listStalePendingChatAttachments, arg.CreatedBefore, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessageAttachment
+	for rows.Next() {
+		var i MessageAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConversationID,
+			&i.MessageID,
+			&i.UploadedByUserID,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.ObjectKey,
+			&i.CreatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneProjectConversationMembers = `-- name: PruneProjectConversationMembers :exec
 DELETE FROM conversation_members cm
 WHERE
@@ -907,6 +1168,55 @@ func (q *Queries) RemoveConversationMember(ctx context.Context, arg RemoveConver
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const softDeleteChatMessageAttachments = `-- name: SoftDeleteChatMessageAttachments :many
+UPDATE message_attachments
+SET deleted_at = NOW()
+WHERE
+    tenant_id = $1::text
+    AND conversation_id = $2::uuid
+    AND message_id = $3::uuid
+    AND deleted_at IS NULL
+RETURNING id, tenant_id, conversation_id, message_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
+`
+
+type SoftDeleteChatMessageAttachmentsParams struct {
+	TenantID       string
+	ConversationID pgtype.UUID
+	MessageID      pgtype.UUID
+}
+
+func (q *Queries) SoftDeleteChatMessageAttachments(ctx context.Context, arg SoftDeleteChatMessageAttachmentsParams) ([]MessageAttachment, error) {
+	rows, err := q.db.Query(ctx, softDeleteChatMessageAttachments, arg.TenantID, arg.ConversationID, arg.MessageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessageAttachment
+	for rows.Next() {
+		var i MessageAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConversationID,
+			&i.MessageID,
+			&i.UploadedByUserID,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.ObjectKey,
+			&i.CreatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const syncProjectConversationMembers = `-- name: SyncProjectConversationMembers :exec

@@ -155,6 +155,23 @@ roles control access; user IDs in application payloads do not replace authentica
     `presence.online` / `presence.offline` frames for users who share a
     conversation. Presence is instance-local in this version; correct
     multi-instance presence needs a shared lease/heartbeat store.
+  - Attachments are uploaded before the message:
+    1. `POST /conversations/{id}/attachments` with multipart field `file`
+       returns pending attachment metadata (same size limit as task
+       attachments).
+    2. Send a message with `attachmentIds` (up to 10). Binding happens in the
+       same transaction as the message insert, so a message and its files are
+       atomic and an upload cannot be used twice. The body may be empty when
+       attachments are present.
+    3. `GET /conversations/{id}/attachments/{attachmentID}/download` returns a
+       five-minute presigned URL; only conversation members can request it.
+    4. `DELETE /conversations/{id}/attachments/{attachmentID}` cancels a
+       pending upload (uploader only, before it is sent).
+    Message payloads in REST history and WebSocket events include an
+    `attachments` array. Deleting a message deletes its attachment metadata
+    and storage objects. Pending uploads that are never sent are swept after
+    24 hours. Files are served with an attachment disposition, and filenames
+    are sanitized before they reach a response header.
 - Time tracking under `/projects/{projectID}/tasks/{taskID}/time-entries`:
   `POST /start`, `POST /stop`, `GET /`, `DELETE /{entryID}`. Each user has one active
   timer per tenant. Only the owner can stop a timer or delete their completed entry.

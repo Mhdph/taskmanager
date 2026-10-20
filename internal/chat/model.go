@@ -90,6 +90,32 @@ type ConversationSummary struct {
 	MemberIDs []string
 }
 
+type Attachment struct {
+	ID string
+
+	TenantID string
+
+	ConversationID string
+
+	// MessageID is nil while the upload is still pending.
+	MessageID *string
+
+	UploadedByUserID string
+
+	Filename string
+
+	ContentType string
+
+	SizeBytes int64
+
+	// ObjectKey is the storage location; never expose it to clients.
+	ObjectKey string
+
+	CreatedAt time.Time
+
+	DeletedAt *time.Time
+}
+
 type Message struct {
 	ID       string
 	TenantID string
@@ -108,6 +134,8 @@ type Message struct {
 
 	// ClientMessageID is the sender-provided idempotency key.
 	ClientMessageID *string
+
+	Attachments []Attachment
 
 	CreatedAt time.Time
 

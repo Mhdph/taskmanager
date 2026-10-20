@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -632,6 +633,10 @@ type CreateMessageParams struct {
 
 	// ClientMessageID enables idempotent retries.
 	ClientMessageID *string
+
+	// AttachmentIDs binds previously uploaded pending attachments to this
+	// message inside the same transaction.
+	AttachmentIDs []string
 }
 
 // CreateMessage inserts a message and advances the conversation tail.
@@ -695,15 +700,42 @@ func (r *Repository) CreateMessage(
 			return Message{}, false, fmt.Errorf("get idempotent message: %w", getErr)
 		}
 
+		existingMessage := messageFromDB(existing)
+
+		existingAttachments, attErr := r.listMessageAttachments(
+			ctx,
+			qtx,
+			params.TenantID,
+			params.ConversationID,
+			existingMessage.ID,
+		)
+		if attErr != nil {
+			return Message{}, false, attErr
+		}
+
+		existingMessage.Attachments = existingAttachments
+
 		if err := tx.Commit(ctx); err != nil {
 			return Message{}, false, fmt.Errorf("commit idempotent message: %w", err)
 		}
 
-		return messageFromDB(existing), false, nil
+		return existingMessage, false, nil
 	}
 
 	if err != nil {
 		return Message{}, false, fmt.Errorf("create message: %w", err)
+	}
+
+	createdMessageID := uuid.UUID(row.ID.Bytes).String()
+
+	attachments, err := r.bindMessageAttachments(
+		ctx,
+		qtx,
+		params,
+		createdMessageID,
+	)
+	if err != nil {
+		return Message{}, false, err
 	}
 
 	if err := qtx.BumpConversationLastMessage(
@@ -727,7 +759,7 @@ func (r *Repository) CreateMessage(
 		Kind:           EventMessageCreated,
 		TenantID:       params.TenantID,
 		ConversationID: params.ConversationID,
-		MessageID:      uuid.UUID(row.ID.Bytes).String(),
+		MessageID:      createdMessageID,
 		Seq:            row.Seq,
 		ActorUserID:    stringValue(params.AuthorUserID),
 	}); err != nil {
@@ -738,7 +770,10 @@ func (r *Repository) CreateMessage(
 		return Message{}, false, fmt.Errorf("commit message: %w", err)
 	}
 
-	return messageFromDB(row), true, nil
+	message := messageFromDB(row)
+	message.Attachments = attachments
+
+	return message, true, nil
 }
 
 // ListMessages returns up to limit messages older than beforeSeq
@@ -778,6 +813,16 @@ func (r *Repository) ListMessages(
 		items = append(items, messageFromDB(row))
 	}
 
+	if err := r.hydrateMessageAttachments(
+		ctx,
+		r.queries,
+		tenantID,
+		id,
+		items,
+	); err != nil {
+		return nil, err
+	}
+
 	return items, nil
 }
 
@@ -813,7 +858,22 @@ func (r *Repository) GetMessage(
 		return Message{}, fmt.Errorf("get message: %w", err)
 	}
 
-	return messageFromDB(row), nil
+	message := messageFromDB(row)
+
+	attachments, err := r.listMessageAttachments(
+		ctx,
+		r.queries,
+		tenantID,
+		conversationID,
+		message.ID,
+	)
+	if err != nil {
+		return Message{}, err
+	}
+
+	message.Attachments = attachments
+
+	return message, nil
 }
 
 func (r *Repository) EditMessage(
@@ -877,25 +937,28 @@ func (r *Repository) EditMessage(
 	return messageFromDB(row), nil
 }
 
+// DeleteMessage tombstones a message and its attachments. The returned
+// attachments are already soft-deleted; the caller is responsible for
+// removing the storage objects.
 func (r *Repository) DeleteMessage(
 	ctx context.Context,
 	tenantID string,
 	conversationID string,
 	messageID string,
-) (Message, error) {
+) (Message, []Attachment, error) {
 	conversationUUID, err := parseUUID(conversationID)
 	if err != nil {
-		return Message{}, fmt.Errorf("parse conversation id: %w", err)
+		return Message{}, nil, fmt.Errorf("parse conversation id: %w", err)
 	}
 
 	messageUUID, err := parseUUID(messageID)
 	if err != nil {
-		return Message{}, fmt.Errorf("parse message id: %w", err)
+		return Message{}, nil, fmt.Errorf("parse message id: %w", err)
 	}
 
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return Message{}, fmt.Errorf("begin message delete: %w", err)
+		return Message{}, nil, fmt.Errorf("begin message delete: %w", err)
 	}
 
 	defer tx.Rollback(ctx)
@@ -912,10 +975,25 @@ func (r *Repository) DeleteMessage(
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Message{}, ErrMessageNotFound
+			return Message{}, nil, ErrMessageNotFound
 		}
 
-		return Message{}, fmt.Errorf("delete message: %w", err)
+		return Message{}, nil, fmt.Errorf("delete message: %w", err)
+	}
+
+	attachmentRows, err := qtx.SoftDeleteChatMessageAttachments(
+		ctx,
+		db.SoftDeleteChatMessageAttachmentsParams{
+			TenantID:       tenantID,
+			ConversationID: conversationUUID,
+			MessageID:      messageUUID,
+		},
+	)
+	if err != nil {
+		return Message{}, nil, fmt.Errorf(
+			"delete message attachments: %w",
+			err,
+		)
 	}
 
 	if err := r.publishTx(ctx, tx, Event{
@@ -926,14 +1004,354 @@ func (r *Repository) DeleteMessage(
 		Seq:            row.Seq,
 		ActorUserID:    textStringValue(row.AuthorUserID),
 	}); err != nil {
-		return Message{}, err
+		return Message{}, nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return Message{}, fmt.Errorf("commit message delete: %w", err)
+		return Message{}, nil, fmt.Errorf("commit message delete: %w", err)
 	}
 
-	return messageFromDB(row), nil
+	return messageFromDB(row), attachmentsFromDB(attachmentRows), nil
+}
+
+// -------------------------------------------------------------------------
+// Attachments
+// -------------------------------------------------------------------------
+
+type CreateAttachmentParams struct {
+	ID string
+
+	TenantID string
+
+	ConversationID string
+
+	UploadedByUserID string
+
+	Filename string
+
+	ContentType string
+
+	SizeBytes int64
+
+	ObjectKey string
+}
+
+func (r *Repository) CreateAttachment(
+	ctx context.Context,
+	params CreateAttachmentParams,
+) (Attachment, error) {
+	id, err := parseUUID(params.ID)
+	if err != nil {
+		return Attachment{}, fmt.Errorf("parse attachment id: %w", err)
+	}
+
+	conversationID, err := parseUUID(params.ConversationID)
+	if err != nil {
+		return Attachment{}, fmt.Errorf("parse conversation id: %w", err)
+	}
+
+	row, err := r.queries.CreateChatAttachment(
+		ctx,
+		db.CreateChatAttachmentParams{
+			ID:               id,
+			TenantID:         params.TenantID,
+			ConversationID:   conversationID,
+			UploadedByUserID: params.UploadedByUserID,
+			Filename:         params.Filename,
+			ContentType:      params.ContentType,
+			SizeBytes:        params.SizeBytes,
+			ObjectKey:        params.ObjectKey,
+		},
+	)
+	if err != nil {
+		return Attachment{}, fmt.Errorf("create attachment: %w", err)
+	}
+
+	return attachmentFromDB(row), nil
+}
+
+func (r *Repository) GetAttachment(
+	ctx context.Context,
+	tenantID string,
+	conversationID string,
+	attachmentID string,
+) (Attachment, error) {
+	conversationUUID, err := parseUUID(conversationID)
+	if err != nil {
+		return Attachment{}, fmt.Errorf("parse conversation id: %w", err)
+	}
+
+	attachmentUUID, err := parseUUID(attachmentID)
+	if err != nil {
+		return Attachment{}, fmt.Errorf("parse attachment id: %w", err)
+	}
+
+	row, err := r.queries.GetChatAttachment(
+		ctx,
+		db.GetChatAttachmentParams{
+			TenantID:       tenantID,
+			ConversationID: conversationUUID,
+			ID:             attachmentUUID,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Attachment{}, ErrAttachmentNotFound
+		}
+
+		return Attachment{}, fmt.Errorf("get attachment: %w", err)
+	}
+
+	return attachmentFromDB(row), nil
+}
+
+// ListStalePendingAttachments returns uploads that were never bound to a
+// message.
+func (r *Repository) ListStalePendingAttachments(
+	ctx context.Context,
+	createdBefore time.Time,
+	limit int32,
+) ([]Attachment, error) {
+	rows, err := r.queries.ListStalePendingChatAttachments(
+		ctx,
+		db.ListStalePendingChatAttachmentsParams{
+			CreatedBefore: pgtype.Timestamptz{
+				Time:  createdBefore,
+				Valid: true,
+			},
+			PageLimit: limit,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list stale attachments: %w", err)
+	}
+
+	return attachmentsFromDB(rows), nil
+}
+
+// DeletePendingAttachment removes an upload that is not bound to a message.
+// The condition is enforced in SQL, so a concurrent send that attaches the
+// row first wins and this returns false.
+func (r *Repository) DeletePendingAttachment(
+	ctx context.Context,
+	tenantID string,
+	conversationID string,
+	attachmentID string,
+	uploadedByUserID string,
+) (bool, error) {
+	conversationUUID, err := parseUUID(conversationID)
+	if err != nil {
+		return false, fmt.Errorf("parse conversation id: %w", err)
+	}
+
+	attachmentUUID, err := parseUUID(attachmentID)
+	if err != nil {
+		return false, fmt.Errorf("parse attachment id: %w", err)
+	}
+
+	deleted, err := r.queries.DeletePendingChatAttachment(
+		ctx,
+		db.DeletePendingChatAttachmentParams{
+			TenantID:         tenantID,
+			ConversationID:   conversationUUID,
+			ID:               attachmentUUID,
+			UploadedByUserID: uploadedByUserID,
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf("delete pending attachment: %w", err)
+	}
+
+	return deleted > 0, nil
+}
+
+// bindMessageAttachments binds pending uploads inside the message
+// transaction. Every requested id must belong to this conversation, this
+// author, and still be pending; otherwise the whole send rolls back.
+func (r *Repository) bindMessageAttachments(
+	ctx context.Context,
+	q *db.Queries,
+	params CreateMessageParams,
+	messageID string,
+) ([]Attachment, error) {
+	if len(params.AttachmentIDs) == 0 {
+		return []Attachment{}, nil
+	}
+
+	messageUUID, err := parseUUID(messageID)
+	if err != nil {
+		return nil, fmt.Errorf("parse message id: %w", err)
+	}
+
+	conversationUUID, err := parseUUID(params.ConversationID)
+	if err != nil {
+		return nil, fmt.Errorf("parse conversation id: %w", err)
+	}
+
+	attachmentIDs := make(
+		[]pgtype.UUID,
+		0,
+		len(params.AttachmentIDs),
+	)
+
+	for _, raw := range params.AttachmentIDs {
+		id, err := parseUUID(raw)
+		if err != nil {
+			return nil, ErrInvalidAttachment
+		}
+
+		attachmentIDs = append(attachmentIDs, id)
+	}
+
+	attached, err := q.AttachChatAttachmentsToMessage(
+		ctx,
+		db.AttachChatAttachmentsToMessageParams{
+			MessageID:        messageUUID,
+			TenantID:         params.TenantID,
+			ConversationID:   conversationUUID,
+			UploadedByUserID: stringValue(params.AuthorUserID),
+			AttachmentIds:    attachmentIDs,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("attach message attachments: %w", err)
+	}
+
+	if attached != int64(len(attachmentIDs)) {
+		return nil, ErrInvalidAttachment
+	}
+
+	return r.listMessageAttachments(
+		ctx,
+		q,
+		params.TenantID,
+		params.ConversationID,
+		messageID,
+	)
+}
+
+func (r *Repository) listMessageAttachments(
+	ctx context.Context,
+	q *db.Queries,
+	tenantID string,
+	conversationID string,
+	messageID string,
+) ([]Attachment, error) {
+	messageUUID, err := parseUUID(messageID)
+	if err != nil {
+		return nil, fmt.Errorf("parse message id: %w", err)
+	}
+
+	conversationUUID, err := parseUUID(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("parse conversation id: %w", err)
+	}
+
+	rows, err := q.ListChatAttachmentsByMessages(
+		ctx,
+		db.ListChatAttachmentsByMessagesParams{
+			TenantID:       tenantID,
+			ConversationID: conversationUUID,
+			MessageIds:     []pgtype.UUID{messageUUID},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list message attachments: %w", err)
+	}
+
+	return attachmentsFromDB(rows), nil
+}
+
+func (r *Repository) hydrateMessageAttachments(
+	ctx context.Context,
+	q *db.Queries,
+	tenantID string,
+	conversationUUID pgtype.UUID,
+	items []Message,
+) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	messageIDs := make([]pgtype.UUID, 0, len(items))
+
+	for _, item := range items {
+		id, err := parseUUID(item.ID)
+		if err != nil {
+			return fmt.Errorf("parse message id: %w", err)
+		}
+
+		messageIDs = append(messageIDs, id)
+	}
+
+	rows, err := q.ListChatAttachmentsByMessages(
+		ctx,
+		db.ListChatAttachmentsByMessagesParams{
+			TenantID:       tenantID,
+			ConversationID: conversationUUID,
+			MessageIds:     messageIDs,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("list message attachments: %w", err)
+	}
+
+	grouped := make(map[string][]Attachment, len(items))
+
+	for _, row := range rows {
+		messageID := uuid.UUID(row.MessageID.Bytes).String()
+		grouped[messageID] = append(
+			grouped[messageID],
+			attachmentFromDB(row),
+		)
+	}
+
+	for i := range items {
+		attachments := grouped[items[i].ID]
+		if attachments == nil {
+			attachments = []Attachment{}
+		}
+
+		items[i].Attachments = attachments
+	}
+
+	return nil
+}
+
+func attachmentsFromDB(rows []db.MessageAttachment) []Attachment {
+	attachments := make([]Attachment, 0, len(rows))
+
+	for _, row := range rows {
+		attachments = append(attachments, attachmentFromDB(row))
+	}
+
+	return attachments
+}
+
+func attachmentFromDB(row db.MessageAttachment) Attachment {
+	attachment := Attachment{
+		ID:               uuid.UUID(row.ID.Bytes).String(),
+		TenantID:         row.TenantID,
+		ConversationID:   uuid.UUID(row.ConversationID.Bytes).String(),
+		UploadedByUserID: row.UploadedByUserID,
+		Filename:         row.Filename,
+		ContentType:      row.ContentType,
+		SizeBytes:        row.SizeBytes,
+		ObjectKey:        row.ObjectKey,
+		CreatedAt:        row.CreatedAt.Time,
+	}
+
+	if row.MessageID.Valid {
+		value := uuid.UUID(row.MessageID.Bytes).String()
+		attachment.MessageID = &value
+	}
+
+	if row.DeletedAt.Valid {
+		value := row.DeletedAt.Time
+		attachment.DeletedAt = &value
+	}
+
+	return attachment
 }
 
 // -------------------------------------------------------------------------

@@ -48,6 +48,55 @@ type Event struct {
 	Typing bool `json:"typing,omitempty"`
 }
 
+// WireAttachment is attachment metadata sent to clients. The storage object
+// key stays server-side; downloads go through the presigned URL endpoint.
+type WireAttachment struct {
+	ID string `json:"id"`
+
+	Filename string `json:"filename"`
+
+	ContentType string `json:"contentType"`
+
+	SizeBytes int64 `json:"sizeBytes"`
+
+	UploadedByUserID string `json:"uploadedByUserId"`
+
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func NewWireAttachment(item Attachment) WireAttachment {
+	return WireAttachment{
+		ID: item.ID,
+
+		Filename: item.Filename,
+
+		ContentType: item.ContentType,
+
+		SizeBytes: item.SizeBytes,
+
+		UploadedByUserID: item.UploadedByUserID,
+
+		CreatedAt: item.CreatedAt,
+	}
+}
+
+func newWireAttachments(items []Attachment) []WireAttachment {
+	attachments := make(
+		[]WireAttachment,
+		0,
+		len(items),
+	)
+
+	for _, item := range items {
+		attachments = append(
+			attachments,
+			NewWireAttachment(item),
+		)
+	}
+
+	return attachments
+}
+
 // WireMessage is the message representation shared by the REST API and
 // WebSocket events.
 type WireMessage struct {
@@ -64,6 +113,8 @@ type WireMessage struct {
 	Body string `json:"body"`
 
 	ClientMessageID *string `json:"clientMessageId"`
+
+	Attachments []WireAttachment `json:"attachments"`
 
 	CreatedAt time.Time `json:"createdAt"`
 
@@ -87,6 +138,8 @@ func NewWireMessage(item Message) WireMessage {
 		Body: item.Body,
 
 		ClientMessageID: item.ClientMessageID,
+
+		Attachments: newWireAttachments(item.Attachments),
 
 		CreatedAt: item.CreatedAt,
 

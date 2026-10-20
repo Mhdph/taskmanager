@@ -83,6 +83,20 @@ type Message struct {
 	DeletedAt       pgtype.Timestamptz
 }
 
+type MessageAttachment struct {
+	ID               pgtype.UUID
+	TenantID         string
+	ConversationID   pgtype.UUID
+	MessageID        pgtype.UUID
+	UploadedByUserID string
+	Filename         string
+	ContentType      string
+	SizeBytes        int64
+	ObjectKey        string
+	CreatedAt        pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
+}
+
 type Project struct {
 	ID              pgtype.UUID
 	TenantID        string

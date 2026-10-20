@@ -229,15 +229,18 @@ func TestChatMessageOrderingIdempotencyAndUnread(t *testing.T) {
 	}
 
 	// Soft delete keeps the stream position but drops the content.
-	deleted, err := repository.DeleteMessage(ctx, tenant, conversation.ID, second.ID)
+	deleted, attachments, err := repository.DeleteMessage(ctx, tenant, conversation.ID, second.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if deleted.Body != "" || deleted.DeletedAt == nil {
 		t.Fatalf("deleted message = %+v, want empty body and tombstone", deleted)
 	}
+	if len(attachments) != 0 {
+		t.Fatalf("deleted attachments = %+v, want none", attachments)
+	}
 
-	_, err = repository.DeleteMessage(ctx, tenant, conversation.ID, second.ID)
+	_, _, err = repository.DeleteMessage(ctx, tenant, conversation.ID, second.ID)
 	if !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("second delete error = %v, want ErrMessageNotFound", err)
 	}

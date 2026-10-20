@@ -255,6 +255,16 @@ func main() {
 		projectRepository,
 		projectAuthorizer,
 		chatBroker,
+		storageClient,
+		cfg.Storage.MaxUploadSize,
+	)
+
+	// Pending uploads that were never sent are swept periodically so
+	// abandoned uploads do not keep objects in the bucket forever.
+	go chatService.RunAttachmentCleanup(
+		ctx,
+		time.Hour,
+		24*time.Hour,
 	)
 
 	chatHandler := chat.NewHandler(
@@ -696,6 +706,21 @@ func main() {
 					r.Get(
 						"/presence",
 						chatHandler.Presence,
+					)
+
+					r.Post(
+						"/attachments",
+						chatHandler.UploadAttachment,
+					)
+
+					r.Get(
+						"/attachments/{attachmentID}/download",
+						chatHandler.DownloadAttachment,
+					)
+
+					r.Delete(
+						"/attachments/{attachmentID}",
+						chatHandler.CancelAttachment,
 					)
 
 					r.Get(

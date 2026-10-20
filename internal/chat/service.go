@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"path"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/mhdph/taskmanager/internal/auth"
 	"github.com/mhdph/taskmanager/internal/project"
+	"github.com/mhdph/taskmanager/internal/storage"
 )
 
 const (
@@ -27,7 +31,37 @@ const (
 	maxMessageBodyLength = 10000
 
 	maxClientMessageIDLength = 128
+
+	maxAttachmentsPerMessage = 10
+
+	maxAttachmentFilenameLength = 500
+
+	maxAttachmentContentTypeLength = 255
+
+	attachmentDownloadExpiry = 5 * time.Minute
+
+	attachmentCleanupBatch = 100
 )
+
+// FileStorage is the object-storage subset used by chat attachments.
+type FileStorage interface {
+	Upload(
+		ctx context.Context,
+		input storage.UploadInput,
+	) error
+
+	Delete(
+		ctx context.Context,
+		objectKey string,
+	) error
+
+	PresignedDownloadURL(
+		ctx context.Context,
+		objectKey string,
+		filename string,
+		expiry time.Duration,
+	) (string, error)
+}
 
 // Publisher is the broker subset used for events that are not tied to a
 // write transaction (read receipts).
@@ -46,6 +80,10 @@ type Service struct {
 	projectAuthorizer *project.Authorizer
 
 	publisher Publisher
+
+	fileStorage FileStorage
+
+	maxUploadSize int64
 }
 
 func NewService(
@@ -53,6 +91,8 @@ func NewService(
 	projectRepository *project.Repository,
 	projectAuthorizer *project.Authorizer,
 	publisher Publisher,
+	fileStorage FileStorage,
+	maxUploadSize int64,
 ) *Service {
 	return &Service{
 		repository: repository,
@@ -62,6 +102,10 @@ func NewService(
 		projectAuthorizer: projectAuthorizer,
 
 		publisher: publisher,
+
+		fileStorage: fileStorage,
+
+		maxUploadSize: maxUploadSize,
 	}
 }
 
@@ -341,6 +385,9 @@ type SendMessageInput struct {
 	// ClientMessageID is optional; when present it makes retries
 	// idempotent.
 	ClientMessageID *string
+
+	// AttachmentIDs references pending uploads from UploadAttachment.
+	AttachmentIDs []string
 }
 
 // SendMessage persists a user message. The bool reports whether a new row
@@ -350,9 +397,21 @@ func (s *Service) SendMessage(
 	ctx context.Context,
 	input SendMessageInput,
 ) (Message, bool, error) {
-	body, err := normalizeMessageBody(input.Body)
+	body, err := normalizeOptionalMessageBody(input.Body)
 	if err != nil {
 		return Message{}, false, err
+	}
+
+	attachmentIDs, err := normalizeAttachmentIDs(
+		input.AttachmentIDs,
+	)
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	// Chat allows attachment-only messages, but not empty messages.
+	if body == "" && len(attachmentIDs) == 0 {
+		return Message{}, false, ErrInvalidBody
 	}
 
 	clientMessageID, err := normalizeClientMessageID(
@@ -389,6 +448,8 @@ func (s *Service) SendMessage(
 			Body: body,
 
 			ClientMessageID: clientMessageID,
+
+			AttachmentIDs: attachmentIDs,
 		},
 	)
 }
@@ -520,12 +581,430 @@ func (s *Service) DeleteMessage(
 		return Message{}, ErrForbidden
 	}
 
-	return s.repository.DeleteMessage(
+	deleted, attachments, err := s.repository.DeleteMessage(
 		ctx,
 		input.Identity.TenantID,
 		conversation.ID,
 		message.ID,
 	)
+	if err != nil {
+		return Message{}, err
+	}
+
+	// The metadata is already committed; failing to remove an object must
+	// not fail the request, but it is logged for storage cleanup.
+	s.deleteAttachmentObjects(ctx, attachments)
+
+	return deleted, nil
+}
+
+type UploadAttachmentInput struct {
+	Identity auth.Identity
+
+	ConversationID string
+
+	Filename string
+
+	ContentType string
+
+	Size int64
+
+	Reader io.Reader
+}
+
+// UploadRequestLimit is the multipart body cap: the file limit plus room for
+// form overhead.
+func (s *Service) UploadRequestLimit() int64 {
+	if s.maxUploadSize <= 0 {
+		return 32 << 20
+	}
+
+	return s.maxUploadSize + (1 << 20)
+}
+
+// UploadAttachment stores the object first and then the pending metadata.
+// The row is not visible in any message until SendMessage binds it.
+func (s *Service) UploadAttachment(
+	ctx context.Context,
+	input UploadAttachmentInput,
+) (Attachment, error) {
+	conversation, _, err := s.authorize(
+		ctx,
+		input.Identity,
+		input.ConversationID,
+	)
+	if err != nil {
+		return Attachment{}, err
+	}
+
+	filename, err := sanitizeAttachmentFilename(input.Filename)
+	if err != nil {
+		return Attachment{}, err
+	}
+
+	if input.Size <= 0 {
+		return Attachment{}, ErrInvalidAttachment
+	}
+
+	if s.maxUploadSize > 0 && input.Size > s.maxUploadSize {
+		return Attachment{}, ErrAttachmentTooLarge
+	}
+
+	if s.fileStorage == nil {
+		return Attachment{}, storage.ErrStorageDisabled
+	}
+
+	attachmentID := uuid.NewString()
+
+	objectKey := fmt.Sprintf(
+		"tenants/%s/chat/%s/%s",
+		input.Identity.TenantID,
+		conversation.ID,
+		attachmentID,
+	)
+
+	if err := s.fileStorage.Upload(ctx, storage.UploadInput{
+		ObjectKey: objectKey,
+
+		Reader: input.Reader,
+
+		Size: input.Size,
+
+		ContentType: normalizeAttachmentContentType(
+			input.ContentType,
+		),
+	}); err != nil {
+		return Attachment{}, fmt.Errorf(
+			"upload attachment object: %w",
+			err,
+		)
+	}
+
+	attachment, err := s.repository.CreateAttachment(
+		ctx,
+		CreateAttachmentParams{
+			ID: attachmentID,
+
+			TenantID: input.Identity.TenantID,
+
+			ConversationID: conversation.ID,
+
+			UploadedByUserID: input.Identity.UserID,
+
+			Filename: filename,
+
+			ContentType: normalizeAttachmentContentType(
+				input.ContentType,
+			),
+
+			SizeBytes: input.Size,
+
+			ObjectKey: objectKey,
+		},
+	)
+	if err != nil {
+		if cleanupErr := s.fileStorage.Delete(
+			ctx,
+			objectKey,
+		); cleanupErr != nil {
+			log.Printf(
+				"cleanup orphan chat attachment %s: %v",
+				objectKey,
+				cleanupErr,
+			)
+		}
+
+		return Attachment{}, fmt.Errorf(
+			"save attachment metadata: %w",
+			err,
+		)
+	}
+
+	return attachment, nil
+}
+
+// CancelAttachment removes an upload that has not been sent. Once bound to
+// a message, only message deletion removes it.
+func (s *Service) CancelAttachment(
+	ctx context.Context,
+	identity auth.Identity,
+	conversationID string,
+	attachmentID string,
+) error {
+	conversation, _, err := s.authorize(
+		ctx,
+		identity,
+		conversationID,
+	)
+	if err != nil {
+		return err
+	}
+
+	attachment, err := s.repository.GetAttachment(
+		ctx,
+		identity.TenantID,
+		conversation.ID,
+		attachmentID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if attachment.UploadedByUserID != identity.UserID {
+		return ErrForbidden
+	}
+
+	if attachment.MessageID != nil {
+		return ErrAttachmentAttached
+	}
+
+	// Delete the row first: a concurrent send that attaches it either wins
+	// (and this returns a conflict) or loses (and its transaction rolls
+	// back). Object cleanup is best-effort afterwards.
+	removed, err := s.repository.DeletePendingAttachment(
+		ctx,
+		identity.TenantID,
+		conversation.ID,
+		attachment.ID,
+		identity.UserID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if !removed {
+		return ErrAttachmentAttached
+	}
+
+	if s.fileStorage != nil {
+		cleanupCtx, cleanupCancel := attachmentStorageContext()
+		defer cleanupCancel()
+
+		if err := s.fileStorage.Delete(
+			cleanupCtx,
+			attachment.ObjectKey,
+		); err != nil && !errors.Is(
+			err,
+			storage.ErrStorageDisabled,
+		) {
+			log.Printf(
+				"delete chat attachment object %s: %v",
+				attachment.ID,
+				err,
+			)
+		}
+	}
+
+	return nil
+}
+
+type AttachmentDownload struct {
+	URL string
+
+	ExpiresAt time.Time
+}
+
+func (s *Service) GetAttachmentDownload(
+	ctx context.Context,
+	identity auth.Identity,
+	conversationID string,
+	attachmentID string,
+) (AttachmentDownload, error) {
+	conversation, _, err := s.authorize(
+		ctx,
+		identity,
+		conversationID,
+	)
+	if err != nil {
+		return AttachmentDownload{}, err
+	}
+
+	attachment, err := s.repository.GetAttachment(
+		ctx,
+		identity.TenantID,
+		conversation.ID,
+		attachmentID,
+	)
+	if err != nil {
+		return AttachmentDownload{}, err
+	}
+
+	if attachment.MessageID == nil {
+		return AttachmentDownload{}, ErrAttachmentNotFound
+	}
+
+	message, err := s.repository.GetMessage(
+		ctx,
+		identity.TenantID,
+		conversation.ID,
+		*attachment.MessageID,
+	)
+	if err != nil || message.DeletedAt != nil {
+		return AttachmentDownload{}, ErrAttachmentNotFound
+	}
+
+	if s.fileStorage == nil {
+		return AttachmentDownload{}, storage.ErrStorageDisabled
+	}
+
+	downloadURL, err := s.fileStorage.PresignedDownloadURL(
+		ctx,
+		attachment.ObjectKey,
+		attachment.Filename,
+		attachmentDownloadExpiry,
+	)
+	if err != nil {
+		return AttachmentDownload{}, fmt.Errorf(
+			"create attachment download url: %w",
+			err,
+		)
+	}
+
+	return AttachmentDownload{
+		URL: downloadURL,
+
+		ExpiresAt: time.Now().UTC().Add(
+			attachmentDownloadExpiry,
+		),
+	}, nil
+}
+
+// RunAttachmentCleanup sweeps uploads that were never sent. It runs once at
+// startup and then on every interval until the context is canceled.
+func (s *Service) RunAttachmentCleanup(
+	ctx context.Context,
+	interval time.Duration,
+	maxAge time.Duration,
+) {
+	if s.fileStorage == nil {
+		return
+	}
+
+	s.cleanupStaleAttachments(ctx, maxAge)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker.C:
+			s.cleanupStaleAttachments(ctx, maxAge)
+		}
+	}
+}
+
+// CleanupStaleAttachments deletes pending uploads older than maxAge. It is
+// exported for the startup worker and tests.
+func (s *Service) CleanupStaleAttachments(
+	ctx context.Context,
+	maxAge time.Duration,
+) (int, error) {
+	if s.fileStorage == nil {
+		return 0, nil
+	}
+
+	items, err := s.repository.ListStalePendingAttachments(
+		ctx,
+		time.Now().UTC().Add(-maxAge),
+		attachmentCleanupBatch,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	removed := 0
+
+	for _, attachment := range items {
+		ok, err := s.repository.DeletePendingAttachment(
+			ctx,
+			attachment.TenantID,
+			attachment.ConversationID,
+			attachment.ID,
+			attachment.UploadedByUserID,
+		)
+		if err != nil {
+			log.Printf(
+				"cleanup chat attachment %s: %v",
+				attachment.ID,
+				err,
+			)
+			continue
+		}
+
+		if !ok {
+			continue
+		}
+
+		if err := s.fileStorage.Delete(
+			ctx,
+			attachment.ObjectKey,
+		); err != nil && !errors.Is(
+			err,
+			storage.ErrStorageDisabled,
+		) {
+			log.Printf(
+				"cleanup chat attachment object %s: %v",
+				attachment.ID,
+				err,
+			)
+		}
+
+		removed++
+	}
+
+	return removed, nil
+}
+
+func (s *Service) cleanupStaleAttachments(
+	ctx context.Context,
+	maxAge time.Duration,
+) {
+	removed, err := s.CleanupStaleAttachments(ctx, maxAge)
+	if err != nil {
+		log.Printf("cleanup stale chat attachments: %v", err)
+		return
+	}
+
+	if removed > 0 {
+		log.Printf("removed %d stale chat attachments", removed)
+	}
+}
+
+func attachmentStorageContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
+}
+
+func (s *Service) deleteAttachmentObjects(
+	ctx context.Context,
+	attachments []Attachment,
+) {
+	if s.fileStorage == nil {
+		return
+	}
+
+	// The metadata is already committed. Use a detached context so a
+	// client disconnect cannot leave the object behind.
+	cleanupCtx, cleanupCancel := attachmentStorageContext()
+	defer cleanupCancel()
+
+	for _, attachment := range attachments {
+		if err := s.fileStorage.Delete(
+			cleanupCtx,
+			attachment.ObjectKey,
+		); err != nil && !errors.Is(
+			err,
+			storage.ErrStorageDisabled,
+		) {
+			log.Printf(
+				"delete chat attachment object %s: %v",
+				attachment.ID,
+				err,
+			)
+		}
+	}
 }
 
 func (s *Service) MarkRead(
@@ -908,6 +1387,18 @@ func normalizeMessageBody(value string) (string, error) {
 	return body, nil
 }
 
+// normalizeOptionalMessageBody allows an empty body for attachment-only
+// messages; the caller decides whether emptiness is acceptable.
+func normalizeOptionalMessageBody(value string) (string, error) {
+	body := strings.TrimSpace(value)
+
+	if utf8.RuneCountInString(body) > maxMessageBodyLength {
+		return "", ErrInvalidBody
+	}
+
+	return body, nil
+}
+
 func normalizeClientMessageID(value *string) (*string, error) {
 	if value == nil {
 		return nil, nil
@@ -923,4 +1414,83 @@ func normalizeClientMessageID(value *string) (*string, error) {
 	}
 
 	return &id, nil
+}
+
+// sanitizeAttachmentFilename keeps the display name but removes path
+// components, control characters and quotes (the filename is echoed into a
+// Content-Disposition header when the file is downloaded).
+func sanitizeAttachmentFilename(value string) (string, error) {
+	filename := strings.TrimSpace(value)
+
+	filename = strings.ReplaceAll(filename, "\\", "/")
+	filename = path.Base(filename)
+
+	filename = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '/' {
+			return -1
+		}
+
+		return r
+	}, filename)
+
+	filename = strings.TrimSpace(filename)
+
+	if filename == "" ||
+		filename == "." ||
+		filename == ".." ||
+		utf8.RuneCountInString(filename) > maxAttachmentFilenameLength {
+
+		return "", ErrInvalidAttachmentFilename
+	}
+
+	return filename, nil
+}
+
+func normalizeAttachmentContentType(value string) string {
+	contentType := strings.TrimSpace(value)
+
+	contentType = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+
+		return r
+	}, contentType)
+
+	if contentType == "" ||
+		len(contentType) > maxAttachmentContentTypeLength {
+
+		return "application/octet-stream"
+	}
+
+	return contentType
+}
+
+func normalizeAttachmentIDs(values []string) ([]string, error) {
+	if len(values) > maxAttachmentsPerMessage {
+		return nil, ErrTooManyAttachments
+	}
+
+	ids := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+
+	for _, raw := range values {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+
+		if _, err := uuid.Parse(id); err != nil {
+			return nil, ErrInvalidAttachment
+		}
+
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
 }
