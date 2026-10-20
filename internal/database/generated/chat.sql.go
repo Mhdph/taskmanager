@@ -97,7 +97,12 @@ VALUES (
     $6,
     $7
 )
-ON CONFLICT (tenant_id, author_user_id, client_message_id)
+ON CONFLICT (
+    tenant_id,
+    conversation_id,
+    author_user_id,
+    client_message_id
+)
     WHERE kind = 'user' AND client_message_id IS NOT NULL
 DO NOTHING
 RETURNING id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
@@ -418,18 +423,25 @@ SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_m
 FROM messages
 WHERE
     tenant_id = $1
-    AND author_user_id = $2
-    AND client_message_id = $3
+    AND conversation_id = $2
+    AND author_user_id = $3
+    AND client_message_id = $4
 `
 
 type GetChatMessageByClientIDParams struct {
 	TenantID        string
+	ConversationID  pgtype.UUID
 	AuthorUserID    pgtype.Text
 	ClientMessageID pgtype.Text
 }
 
 func (q *Queries) GetChatMessageByClientID(ctx context.Context, arg GetChatMessageByClientIDParams) (Message, error) {
-	row := q.db.QueryRow(ctx, getChatMessageByClientID, arg.TenantID, arg.AuthorUserID, arg.ClientMessageID)
+	row := q.db.QueryRow(ctx, getChatMessageByClientID,
+		arg.TenantID,
+		arg.ConversationID,
+		arg.AuthorUserID,
+		arg.ClientMessageID,
+	)
 	var i Message
 	err := row.Scan(
 		&i.ID,

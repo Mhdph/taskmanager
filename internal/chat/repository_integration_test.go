@@ -69,7 +69,7 @@ func integrationChatRepository(t *testing.T) (*Repository, *pgxpool.Pool, contex
 		}
 	}
 
-	return NewRepository(pool, db.New(pool)), pool, ctx
+	return NewRepository(pool, db.New(pool), nil), pool, ctx
 }
 
 func addTenantMembers(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenantID string, userIDs ...string) {

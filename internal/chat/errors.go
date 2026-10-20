@@ -55,6 +55,14 @@ var (
 		"invalid read cursor",
 	)
 
+	ErrInvalidBody = errors.New(
+		"invalid message body",
+	)
+
+	ErrInvalidClientMessageID = errors.New(
+		"invalid client message id",
+	)
+
 	ErrInvalidCursor = errors.New(
 		"invalid message cursor",
 	)

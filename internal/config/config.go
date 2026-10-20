@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -19,6 +20,15 @@ type Config struct {
 
 	Storage StorageConfig
 	AI      AIConfig
+
+	Chat ChatConfig
+}
+
+type ChatConfig struct {
+	// AllowedOrigins lists cross-origin hosts accepted by the WebSocket
+	// upgrade (CHAT_WS_ORIGINS, comma separated). The request host is
+	// always accepted.
+	AllowedOrigins []string
 }
 type AIConfig struct {
 	APIKey  string
@@ -127,6 +137,12 @@ func Load() (Config, error) {
 
 			MaxUploadSize: 25 * 1024 * 1024,
 		},
+
+		Chat: ChatConfig{
+			AllowedOrigins: splitList(
+				os.Getenv("CHAT_WS_ORIGINS"),
+			),
+		},
 	}
 
 	return cfg, nil
@@ -154,4 +170,25 @@ func requireEnv(key string) (string, error) {
 	}
 
 	return value, nil
+}
+
+func splitList(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+
+	items := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		items = append(items, part)
+	}
+
+	return items
 }

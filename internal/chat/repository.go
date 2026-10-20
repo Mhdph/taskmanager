@@ -15,15 +15,22 @@ import (
 type Repository struct {
 	db      *pgxpool.Pool
 	queries *db.Queries
+
+	// publisher may be nil (unit tests, read-only tooling): writes still
+	// commit, they just do not fan out.
+	publisher EventPublisher
 }
 
 func NewRepository(
 	pool *pgxpool.Pool,
 	queries *db.Queries,
+	publisher EventPublisher,
 ) *Repository {
 	return &Repository{
 		db:      pool,
 		queries: queries,
+
+		publisher: publisher,
 	}
 }
 
@@ -660,6 +667,7 @@ func (r *Repository) CreateMessage(
 			ctx,
 			db.GetChatMessageByClientIDParams{
 				TenantID:        params.TenantID,
+				ConversationID:  conversationID,
 				AuthorUserID:    textValue(params.AuthorUserID),
 				ClientMessageID: textValue(params.ClientMessageID),
 			},
@@ -692,6 +700,19 @@ func (r *Repository) CreateMessage(
 		},
 	); err != nil {
 		return Message{}, false, fmt.Errorf("bump conversation tail: %w", err)
+	}
+
+	// NOTIFY is delivered only on commit, so the event can never describe
+	// a message that was rolled back.
+	if err := r.publishTx(ctx, tx, Event{
+		Kind:           EventMessageCreated,
+		TenantID:       params.TenantID,
+		ConversationID: params.ConversationID,
+		MessageID:      uuid.UUID(row.ID.Bytes).String(),
+		Seq:            row.Seq,
+		ActorUserID:    stringValue(params.AuthorUserID),
+	}); err != nil {
+		return Message{}, false, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -793,7 +814,16 @@ func (r *Repository) EditMessage(
 		return Message{}, fmt.Errorf("parse message id: %w", err)
 	}
 
-	row, err := r.queries.EditChatMessage(
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Message{}, fmt.Errorf("begin message edit: %w", err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	row, err := qtx.EditChatMessage(
 		ctx,
 		db.EditChatMessageParams{
 			Body:           body,
@@ -808,6 +838,21 @@ func (r *Repository) EditMessage(
 		}
 
 		return Message{}, fmt.Errorf("edit message: %w", err)
+	}
+
+	if err := r.publishTx(ctx, tx, Event{
+		Kind:           EventMessageEdited,
+		TenantID:       tenantID,
+		ConversationID: conversationID,
+		MessageID:      messageID,
+		Seq:            row.Seq,
+		ActorUserID:    textStringValue(row.AuthorUserID),
+	}); err != nil {
+		return Message{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, fmt.Errorf("commit message edit: %w", err)
 	}
 
 	return messageFromDB(row), nil
@@ -829,7 +874,16 @@ func (r *Repository) DeleteMessage(
 		return Message{}, fmt.Errorf("parse message id: %w", err)
 	}
 
-	row, err := r.queries.DeleteChatMessage(
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Message{}, fmt.Errorf("begin message delete: %w", err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	row, err := qtx.DeleteChatMessage(
 		ctx,
 		db.DeleteChatMessageParams{
 			TenantID:       tenantID,
@@ -843,6 +897,21 @@ func (r *Repository) DeleteMessage(
 		}
 
 		return Message{}, fmt.Errorf("delete message: %w", err)
+	}
+
+	if err := r.publishTx(ctx, tx, Event{
+		Kind:           EventMessageDeleted,
+		TenantID:       tenantID,
+		ConversationID: conversationID,
+		MessageID:      messageID,
+		Seq:            row.Seq,
+		ActorUserID:    textStringValue(row.AuthorUserID),
+	}); err != nil {
+		return Message{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, fmt.Errorf("commit message delete: %w", err)
 	}
 
 	return messageFromDB(row), nil
@@ -867,6 +936,38 @@ func textValue(value *string) pgtype.Text {
 	}
 
 	return pgtype.Text{String: *value, Valid: true}
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+
+	return *value
+}
+
+func textStringValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+
+	return value.String
+}
+
+func (r *Repository) publishTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	event Event,
+) error {
+	if r.publisher == nil {
+		return nil
+	}
+
+	if err := r.publisher.PublishTx(ctx, tx, event); err != nil {
+		return fmt.Errorf("publish %s: %w", event.Kind, err)
+	}
+
+	return nil
 }
 
 // dmKey canonically identifies a user pair regardless of who started the

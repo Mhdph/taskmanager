@@ -16,11 +16,25 @@ import (
 
 type Handler struct {
 	service *Service
+
+	hub *Hub
+
+	// allowedOrigins are the cross-origin hosts accepted by the WebSocket
+	// upgrade. The request host is always accepted.
+	allowedOrigins []string
 }
 
-func NewHandler(service *Service) *Handler {
+func NewHandler(
+	service *Service,
+	hub *Hub,
+	allowedOrigins []string,
+) *Handler {
 	return &Handler{
 		service: service,
+
+		hub: hub,
+
+		allowedOrigins: allowedOrigins,
 	}
 }
 
@@ -177,58 +191,12 @@ func toConversationDetailResponse(
 	}
 }
 
-type messageResponse struct {
-	ID string `json:"id"`
-
-	ConversationID string `json:"conversationId"`
-
-	Seq int64 `json:"seq"`
-
-	Kind string `json:"kind"`
-
-	AuthorUserID *string `json:"authorUserId"`
-
-	Body string `json:"body"`
-
-	ClientMessageID *string `json:"clientMessageId"`
-
-	CreatedAt time.Time `json:"createdAt"`
-
-	EditedAt *time.Time `json:"editedAt"`
-
-	DeletedAt *time.Time `json:"deletedAt"`
-}
-
-func toMessageResponse(item Message) messageResponse {
-	return messageResponse{
-		ID: item.ID,
-
-		ConversationID: item.ConversationID,
-
-		Seq: item.Seq,
-
-		Kind: string(item.Kind),
-
-		AuthorUserID: item.AuthorUserID,
-
-		Body: item.Body,
-
-		ClientMessageID: item.ClientMessageID,
-
-		CreatedAt: item.CreatedAt,
-
-		EditedAt: item.EditedAt,
-
-		DeletedAt: item.DeletedAt,
-	}
-}
-
 type listConversationsResponse struct {
 	Items []conversationSummaryResponse `json:"items"`
 }
 
 type listMessagesResponse struct {
-	Items []messageResponse `json:"items"`
+	Items []WireMessage `json:"items"`
 
 	NextCursor *string `json:"nextCursor"`
 }
@@ -251,6 +219,18 @@ type createConversationRequest struct {
 
 type markReadRequest struct {
 	LastReadSeq int64 `json:"lastReadSeq"`
+}
+
+type sendMessageRequest struct {
+	Body string `json:"body"`
+
+	// ClientMessageID makes retries idempotent: resending with the same id
+	// returns the original message instead of creating a duplicate.
+	ClientMessageID *string `json:"clientMessageId"`
+}
+
+type editMessageRequest struct {
+	Body string `json:"body"`
 }
 
 type addMemberRequest struct {
@@ -470,7 +450,7 @@ func (h *Handler) ListMessages(
 	}
 
 	items := make(
-		[]messageResponse,
+		[]WireMessage,
 		0,
 		len(page.Items),
 	)
@@ -478,7 +458,7 @@ func (h *Handler) ListMessages(
 	for _, message := range page.Items {
 		items = append(
 			items,
-			toMessageResponse(message),
+			NewWireMessage(message),
 		)
 	}
 
@@ -495,6 +475,158 @@ func (h *Handler) ListMessages(
 	); err != nil {
 		log.Printf(
 			"encode message list: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) SendMessage(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	var req sendMessageRequest
+
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		http.Error(
+			w,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
+		)
+		return
+	}
+
+	message, created, err := h.service.SendMessage(
+		r.Context(),
+		SendMessageInput{
+			Identity: identity,
+
+			ConversationID: chi.URLParam(r, "conversationID"),
+
+			Body: req.Body,
+
+			ClientMessageID: req.ClientMessageID,
+		},
+	)
+	if err != nil {
+		h.writeError(w, "send message", err)
+		return
+	}
+
+	// 200 means the client message id was already stored and the original
+	// message is being returned (idempotent retry). 201 means new.
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(status)
+
+	if err := json.NewEncoder(w).Encode(
+		NewWireMessage(message),
+	); err != nil {
+		log.Printf(
+			"encode sent message: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) EditMessage(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	var req editMessageRequest
+
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		http.Error(
+			w,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
+		)
+		return
+	}
+
+	message, err := h.service.EditMessage(
+		r.Context(),
+		EditMessageInput{
+			Identity: identity,
+
+			ConversationID: chi.URLParam(r, "conversationID"),
+
+			MessageID: chi.URLParam(r, "messageID"),
+
+			Body: req.Body,
+		},
+	)
+	if err != nil {
+		h.writeError(w, "edit message", err)
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		NewWireMessage(message),
+	); err != nil {
+		log.Printf(
+			"encode edited message: %v",
+			err,
+		)
+	}
+}
+
+func (h *Handler) DeleteMessage(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	message, err := h.service.DeleteMessage(
+		r.Context(),
+		DeleteMessageInput{
+			Identity: identity,
+
+			ConversationID: chi.URLParam(r, "conversationID"),
+
+			MessageID: chi.URLParam(r, "messageID"),
+		},
+	)
+	if err != nil {
+		h.writeError(w, "delete message", err)
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		NewWireMessage(message),
+	); err != nil {
+		log.Printf(
+			"encode deleted message: %v",
 			err,
 		)
 	}
@@ -663,7 +795,9 @@ func (h *Handler) writeError(
 		errors.Is(err, ErrInvalidTitle),
 		errors.Is(err, ErrInvalidMembers),
 		errors.Is(err, ErrTooManyMembers),
-		errors.Is(err, ErrInvalidReadCursor):
+		errors.Is(err, ErrInvalidReadCursor),
+		errors.Is(err, ErrInvalidBody),
+		errors.Is(err, ErrInvalidClientMessageID):
 
 		http.Error(
 			w,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"unicode/utf8"
 
@@ -22,7 +23,17 @@ const (
 	maxMessagePageSize     = 100
 
 	maxConversationPageSize = 100
+
+	maxMessageBodyLength = 10000
+
+	maxClientMessageIDLength = 128
 )
+
+// Publisher is the broker subset used for events that are not tied to a
+// write transaction (read receipts).
+type Publisher interface {
+	Publish(ctx context.Context, event Event) error
+}
 
 // Service owns conversation access rules. Project conversations delegate to
 // the project authorizer so chat visibility can never drift from project
@@ -33,12 +44,15 @@ type Service struct {
 	projectRepository *project.Repository
 
 	projectAuthorizer *project.Authorizer
+
+	publisher Publisher
 }
 
 func NewService(
 	repository *Repository,
 	projectRepository *project.Repository,
 	projectAuthorizer *project.Authorizer,
+	publisher Publisher,
 ) *Service {
 	return &Service{
 		repository: repository,
@@ -46,6 +60,8 @@ func NewService(
 		projectRepository: projectRepository,
 
 		projectAuthorizer: projectAuthorizer,
+
+		publisher: publisher,
 	}
 }
 
@@ -315,6 +331,167 @@ func (s *Service) ListMessages(
 	}, nil
 }
 
+type SendMessageInput struct {
+	Identity auth.Identity
+
+	ConversationID string
+
+	Body string
+
+	// ClientMessageID is optional; when present it makes retries
+	// idempotent.
+	ClientMessageID *string
+}
+
+// SendMessage persists a user message. The bool reports whether a new row
+// was created; false means the client message id was already stored and the
+// original message is returned.
+func (s *Service) SendMessage(
+	ctx context.Context,
+	input SendMessageInput,
+) (Message, bool, error) {
+	body, err := normalizeMessageBody(input.Body)
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	clientMessageID, err := normalizeClientMessageID(
+		input.ClientMessageID,
+	)
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	conversation, _, err := s.authorize(
+		ctx,
+		input.Identity,
+		input.ConversationID,
+	)
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	authorUserID := input.Identity.UserID
+
+	return s.repository.CreateMessage(
+		ctx,
+		CreateMessageParams{
+			ID: uuid.NewString(),
+
+			TenantID: input.Identity.TenantID,
+
+			ConversationID: conversation.ID,
+
+			Kind: MessageKindUser,
+
+			AuthorUserID: &authorUserID,
+
+			Body: body,
+
+			ClientMessageID: clientMessageID,
+		},
+	)
+}
+
+type EditMessageInput struct {
+	Identity auth.Identity
+
+	ConversationID string
+	MessageID      string
+
+	Body string
+}
+
+func (s *Service) EditMessage(
+	ctx context.Context,
+	input EditMessageInput,
+) (Message, error) {
+	body, err := normalizeMessageBody(input.Body)
+	if err != nil {
+		return Message{}, err
+	}
+
+	conversation, _, err := s.authorize(
+		ctx,
+		input.Identity,
+		input.ConversationID,
+	)
+	if err != nil {
+		return Message{}, err
+	}
+
+	message, err := s.repository.GetMessage(
+		ctx,
+		input.Identity.TenantID,
+		conversation.ID,
+		input.MessageID,
+	)
+	if err != nil {
+		return Message{}, err
+	}
+
+	if message.AuthorUserID == nil ||
+		*message.AuthorUserID != input.Identity.UserID {
+
+		return Message{}, ErrForbidden
+	}
+
+	return s.repository.EditMessage(
+		ctx,
+		input.Identity.TenantID,
+		conversation.ID,
+		message.ID,
+		body,
+	)
+}
+
+type DeleteMessageInput struct {
+	Identity auth.Identity
+
+	ConversationID string
+	MessageID      string
+}
+
+// DeleteMessage tombstones a message. Authors can delete their own
+// messages; conversation owners (project managers) can moderate any message.
+func (s *Service) DeleteMessage(
+	ctx context.Context,
+	input DeleteMessageInput,
+) (Message, error) {
+	conversation, member, err := s.authorize(
+		ctx,
+		input.Identity,
+		input.ConversationID,
+	)
+	if err != nil {
+		return Message{}, err
+	}
+
+	message, err := s.repository.GetMessage(
+		ctx,
+		input.Identity.TenantID,
+		conversation.ID,
+		input.MessageID,
+	)
+	if err != nil {
+		return Message{}, err
+	}
+
+	isAuthor := message.AuthorUserID != nil &&
+		*message.AuthorUserID == input.Identity.UserID
+
+	if !isAuthor && member.Role != MemberRoleOwner {
+		return Message{}, ErrForbidden
+	}
+
+	return s.repository.DeleteMessage(
+		ctx,
+		input.Identity.TenantID,
+		conversation.ID,
+		message.ID,
+	)
+}
+
 func (s *Service) MarkRead(
 	ctx context.Context,
 	identity auth.Identity,
@@ -343,6 +520,24 @@ func (s *Service) MarkRead(
 
 	if !updated {
 		return ErrForbidden
+	}
+
+	// Read receipts are ephemeral for the writer: the cursor is already
+	// saved, so a failed publish must not fail the request.
+	if s.publisher != nil {
+		err := s.publisher.Publish(
+			ctx,
+			Event{
+				Kind:           EventConversationRead,
+				TenantID:       identity.TenantID,
+				ConversationID: conversation.ID,
+				ActorUserID:    identity.UserID,
+				LastReadSeq:    lastReadSeq,
+			},
+		)
+		if err != nil {
+			log.Printf("publish read receipt: %v", err)
+		}
 	}
 
 	return nil
@@ -665,4 +860,31 @@ func reverseMessages(items []Message) {
 	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
 		items[i], items[j] = items[j], items[i]
 	}
+}
+
+func normalizeMessageBody(value string) (string, error) {
+	body := strings.TrimSpace(value)
+
+	if body == "" || utf8.RuneCountInString(body) > maxMessageBodyLength {
+		return "", ErrInvalidBody
+	}
+
+	return body, nil
+}
+
+func normalizeClientMessageID(value *string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	id := strings.TrimSpace(*value)
+	if id == "" {
+		return nil, nil
+	}
+
+	if len(id) > maxClientMessageIDLength {
+		return nil, ErrInvalidClientMessageID
+	}
+
+	return &id, nil
 }

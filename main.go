@@ -233,15 +233,34 @@ func main() {
 	// Chat module
 	// -------------------------------------------------------------------------
 
+	chatBroker := chat.NewPostgresBroker(pool)
+
+	chatRepository := chat.NewRepository(
+		pool,
+		queries,
+		chatBroker,
+	)
+
+	chatHub := chat.NewHub(chatRepository)
+
+	if err := chatBroker.Start(
+		ctx,
+		chatHub.HandleEvent,
+	); err != nil {
+		log.Fatalf("start chat broker: %v", err)
+	}
+
+	chatService := chat.NewService(
+		chatRepository,
+		projectRepository,
+		projectAuthorizer,
+		chatBroker,
+	)
+
 	chatHandler := chat.NewHandler(
-		chat.NewService(
-			chat.NewRepository(
-				pool,
-				queries,
-			),
-			projectRepository,
-			projectAuthorizer,
-		),
+		chatService,
+		chatHub,
+		cfg.Chat.AllowedOrigins,
 	)
 
 	// -------------------------------------------------------------------------
@@ -416,6 +435,14 @@ func main() {
 	).Get(
 		"/me",
 		handleMe,
+	)
+
+	// Chat WebSocket stream (all conversations of the authenticated user)
+	router.With(
+		authMiddleware.Authenticate,
+	).Get(
+		"/chat/stream",
+		chatHandler.Stream,
 	)
 
 	router.Route(
@@ -672,6 +699,21 @@ func main() {
 					)
 
 					r.Post(
+						"/messages",
+						chatHandler.SendMessage,
+					)
+
+					r.Patch(
+						"/messages/{messageID}",
+						chatHandler.EditMessage,
+					)
+
+					r.Delete(
+						"/messages/{messageID}",
+						chatHandler.DeleteMessage,
+					)
+
+					r.Post(
 						"/read",
 						chatHandler.MarkRead,
 					)
@@ -892,8 +934,16 @@ func main() {
 	)
 	defer cancelShutdown()
 
+	// http.Server.Shutdown does not close hijacked WebSocket connections,
+	// and would wait for their handlers. Close them first.
+	chatHub.Close()
+
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown server: %v", err)
+	}
+
+	if err := chatBroker.Close(); err != nil {
+		log.Printf("stop chat broker: %v", err)
 	}
 
 	if err := notificationDispatcher.Close(shutdownCtx); err != nil {

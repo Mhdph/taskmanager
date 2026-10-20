@@ -24,6 +24,7 @@ func integrationChatService(t *testing.T) (*Service, *pgxpool.Pool, context.Cont
 		repository,
 		projects,
 		project.NewAuthorizer(projects),
+		nil,
 	), pool, ctx
 }
 

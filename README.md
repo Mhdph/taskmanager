@@ -128,6 +128,20 @@ roles control access; user IDs in application payloads do not replace authentica
   message; `GET /conversations/{id}/messages?before=<cursor>` pages history by
   the monotonic message sequence; `POST /conversations/{id}/read` advances the
   per-member read cursor. Project chat membership follows project membership.
+- Chat writes and real-time delivery:
+  - `POST /conversations/{id}/messages` with an optional `clientMessageId`.
+    Retrying the same id returns the stored message with `200` instead of
+    duplicating it; a new message returns `201`.
+  - `PATCH /conversations/{id}/messages/{messageID}` (author only) and
+    `DELETE /conversations/{id}/messages/{messageID}` (author or conversation
+    owner) edit or tombstone a message.
+  - `GET /chat/stream` upgrades to a WebSocket using the same authentication
+    headers. It pushes `message.created`, `message.edited`, `message.deleted`
+    and `conversation.read` frames after a `hello` frame. Clients that miss
+    frames (offline, slow consumer, reconnect) resync through the REST history
+    using `seq`. Fan-out uses Postgres `LISTEN/NOTIFY`, so multiple API
+    instances stay in sync. `CHAT_WS_ORIGINS` lists allowed cross-origin hosts;
+    the request host is always accepted.
 - Time tracking under `/projects/{projectID}/tasks/{taskID}/time-entries`:
   `POST /start`, `POST /stop`, `GET /`, `DELETE /{entryID}`. Each user has one active
   timer per tenant. Only the owner can stop a timer or delete their completed entry.
