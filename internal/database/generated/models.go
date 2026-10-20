@@ -21,6 +21,30 @@ type AuditLog struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type Conversation struct {
+	ID              pgtype.UUID
+	TenantID        string
+	Type            string
+	ProjectID       pgtype.UUID
+	DmKey           pgtype.Text
+	Title           string
+	CreatedByUserID string
+	LastMessageSeq  int64
+	LastMessageAt   pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type ConversationMember struct {
+	ConversationID pgtype.UUID
+	TenantID       string
+	UserID         string
+	Role           string
+	Source         string
+	LastReadSeq    int64
+	JoinedAt       pgtype.Timestamptz
+}
+
 type FavoriteProject struct {
 	TenantID  string
 	ProjectID pgtype.UUID
@@ -43,6 +67,20 @@ type Label struct {
 	Color     string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type Message struct {
+	ID              pgtype.UUID
+	TenantID        string
+	ConversationID  pgtype.UUID
+	Seq             int64
+	Kind            string
+	AuthorUserID    pgtype.Text
+	Body            string
+	ClientMessageID pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	EditedAt        pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
 }
 
 type Project struct {
