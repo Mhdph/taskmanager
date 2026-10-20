@@ -204,6 +204,9 @@ type listMessagesResponse struct {
 	Items []WireMessage `json:"items"`
 
 	NextCursor *string `json:"nextCursor"`
+
+	// NextAfter is only set on forward replay pages.
+	NextAfter *int64 `json:"nextAfter,omitempty"`
 }
 
 // -------------------------------------------------------------------------
@@ -498,6 +501,8 @@ func (h *Handler) ListMessages(
 
 			Before: r.URL.Query().Get("before"),
 
+			After: r.URL.Query().Get("after"),
+
 			Limit: limit,
 		},
 	)
@@ -528,6 +533,8 @@ func (h *Handler) ListMessages(
 		listMessagesResponse{
 			Items:      items,
 			NextCursor: page.NextCursor,
+
+			NextAfter: page.NextAfter,
 		},
 	); err != nil {
 		log.Printf(

@@ -164,6 +164,11 @@ type MessagePage struct {
 	// NextCursor points at the oldest item in the page; pass it as
 	// "before" to load the previous page.
 	NextCursor *string
+
+	// NextAfter is set on forward replay pages and points at the newest
+	// item in the page; pass it as "after" to fetch the next batch. Nil
+	// means the replay reached the current tail.
+	NextAfter *int64
 }
 
 type ConversationDetail struct {

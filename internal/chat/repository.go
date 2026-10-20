@@ -666,6 +666,20 @@ func (r *Repository) CreateMessage(
 
 	qtx := r.queries.WithTx(tx)
 
+	// Serialize inserts per conversation so sequence assignment order
+	// matches commit order. This is what makes "after=<last seq>" replay
+	// safe: a lower seq cannot become visible after a higher one.
+	// Use the canonical UUID form so the same conversation cannot take
+	// different locks through upper/lower-case or braced path input.
+	lockKey := params.TenantID + ":" + uuid.UUID(conversationID.Bytes).String()
+
+	if err := qtx.LockChatConversation(ctx, lockKey); err != nil {
+		return Message{}, false, fmt.Errorf(
+			"lock conversation messages: %w",
+			err,
+		)
+	}
+
 	row, err := qtx.CreateChatMessage(
 		ctx,
 		db.CreateChatMessageParams{
@@ -808,6 +822,45 @@ func (r *Repository) ListMessages(
 		return nil, fmt.Errorf("list messages: %w", err)
 	}
 
+	return r.hydrateMessageRows(ctx, tenantID, id, rows)
+}
+
+// ListMessagesAfter returns up to limit messages newer than afterSeq, oldest
+// first. The caller pages forward by passing the last returned seq.
+func (r *Repository) ListMessagesAfter(
+	ctx context.Context,
+	tenantID string,
+	conversationID string,
+	afterSeq int64,
+	limit int32,
+) ([]Message, error) {
+	id, err := parseUUID(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("parse conversation id: %w", err)
+	}
+
+	rows, err := r.queries.ListChatMessagesAfter(
+		ctx,
+		db.ListChatMessagesAfterParams{
+			TenantID:       tenantID,
+			ConversationID: id,
+			AfterSeq:       afterSeq,
+			PageLimit:      limit,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list messages after: %w", err)
+	}
+
+	return r.hydrateMessageRows(ctx, tenantID, id, rows)
+}
+
+func (r *Repository) hydrateMessageRows(
+	ctx context.Context,
+	tenantID string,
+	conversationUUID pgtype.UUID,
+	rows []db.Message,
+) ([]Message, error) {
 	items := make([]Message, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, messageFromDB(row))
@@ -817,7 +870,7 @@ func (r *Repository) ListMessages(
 		ctx,
 		r.queries,
 		tenantID,
-		id,
+		conversationUUID,
 		items,
 	); err != nil {
 		return nil, err

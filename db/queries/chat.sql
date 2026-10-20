@@ -327,6 +327,30 @@ ORDER BY seq DESC
 LIMIT sqlc.arg(page_limit);
 
 
+-- Forward replay after a known sequence. Unlike the history query this reads
+-- oldest-first, so a reconnecting client can page forward from its last seen
+-- sequence without gaps.
+-- name: ListChatMessagesAfter :many
+SELECT *
+FROM messages
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND conversation_id = sqlc.arg(conversation_id)::uuid
+    AND seq > sqlc.arg(after_seq)::bigint
+ORDER BY seq ASC
+LIMIT sqlc.arg(page_limit);
+
+
+-- Serialize message inserts per conversation. The identity sequence is
+-- assigned at INSERT time; without this lock a transaction holding a lower
+-- seq can commit after a higher one, making "seq > lastSeen" replay skip it.
+-- The lock is transaction-scoped and released on commit or rollback.
+-- name: LockChatConversation :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(sqlc.arg(lock_key)::text, 0)
+);
+
+
 -- name: BumpConversationLastMessage :exec
 UPDATE conversations
 SET

@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -341,8 +342,12 @@ type ListMessagesInput struct {
 
 	ConversationID string
 
-	// Before is an opaque cursor from a previous page.
+	// Before is an opaque cursor from a previous history page.
 	Before string
+
+	// After is a raw sequence number for forward replay after a known
+	// message. Before and After are mutually exclusive.
+	After string
 
 	Limit int
 }
@@ -366,6 +371,45 @@ func (s *Service) ListMessages(
 	}
 	if limit > maxMessagePageSize {
 		limit = maxMessagePageSize
+	}
+
+	if input.Before != "" && input.After != "" {
+		return MessagePage{}, ErrInvalidCursor
+	}
+
+	// Forward replay: everything newer than a known sequence, oldest first.
+	if input.After != "" {
+		afterSeq, err := parseAfterSequence(input.After)
+		if err != nil {
+			return MessagePage{}, err
+		}
+
+		items, err := s.repository.ListMessagesAfter(
+			ctx,
+			input.Identity.TenantID,
+			conversation.ID,
+			afterSeq,
+			int32(limit+1),
+		)
+		if err != nil {
+			return MessagePage{}, err
+		}
+
+		hasMore := len(items) > limit
+		if hasMore {
+			items = items[:limit]
+		}
+
+		var nextAfter *int64
+		if hasMore && len(items) > 0 {
+			value := items[len(items)-1].Seq
+			nextAfter = &value
+		}
+
+		return MessagePage{
+			Items:     items,
+			NextAfter: nextAfter,
+		}, nil
 	}
 
 	var beforeSeq *int64
@@ -408,6 +452,15 @@ func (s *Service) ListMessages(
 		Items:      items,
 		NextCursor: nextCursor,
 	}, nil
+}
+
+func parseAfterSequence(value string) (int64, error) {
+	seq, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || seq < 0 {
+		return 0, ErrInvalidCursor
+	}
+
+	return seq, nil
 }
 
 type SendMessageInput struct {

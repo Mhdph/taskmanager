@@ -933,6 +933,64 @@ func (q *Queries) ListChatMessages(ctx context.Context, arg ListChatMessagesPara
 	return items, nil
 }
 
+const listChatMessagesAfter = `-- name: ListChatMessagesAfter :many
+SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+FROM messages
+WHERE
+    tenant_id = $1::text
+    AND conversation_id = $2::uuid
+    AND seq > $3::bigint
+ORDER BY seq ASC
+LIMIT $4
+`
+
+type ListChatMessagesAfterParams struct {
+	TenantID       string
+	ConversationID pgtype.UUID
+	AfterSeq       int64
+	PageLimit      int32
+}
+
+// Forward replay after a known sequence. Unlike the history query this reads
+// oldest-first, so a reconnecting client can page forward from its last seen
+// sequence without gaps.
+func (q *Queries) ListChatMessagesAfter(ctx context.Context, arg ListChatMessagesAfterParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, listChatMessagesAfter,
+		arg.TenantID,
+		arg.ConversationID,
+		arg.AfterSeq,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConversationID,
+			&i.Seq,
+			&i.Kind,
+			&i.AuthorUserID,
+			&i.Body,
+			&i.ClientMessageID,
+			&i.CreatedAt,
+			&i.EditedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatTenantMemberIDsIn = `-- name: ListChatTenantMemberIDsIn :many
 SELECT user_id
 FROM tenant_members
@@ -1188,6 +1246,21 @@ func (q *Queries) ListStalePendingChatAttachments(ctx context.Context, arg ListS
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockChatConversation = `-- name: LockChatConversation :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended($1::text, 0)
+)
+`
+
+// Serialize message inserts per conversation. The identity sequence is
+// assigned at INSERT time; without this lock a transaction holding a lower
+// seq can commit after a higher one, making "seq > lastSeen" replay skip it.
+// The lock is transaction-scoped and released on commit or rollback.
+func (q *Queries) LockChatConversation(ctx context.Context, lockKey string) error {
+	_, err := q.db.Exec(ctx, lockChatConversation, lockKey)
+	return err
 }
 
 const pruneProjectConversationMembers = `-- name: PruneProjectConversationMembers :exec

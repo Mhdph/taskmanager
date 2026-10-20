@@ -125,9 +125,12 @@ roles control access; user IDs in application payloads do not replace authentica
 - Chat under `/conversations` and `/projects/{projectID}/chat`: one decision
   thread per project, direct messages (a single thread per user pair) and group
   conversations. `GET /conversations` includes unread counts and the last
-  message; `GET /conversations/{id}/messages?before=<cursor>` pages history by
-  the monotonic message sequence; `POST /conversations/{id}/read` advances the
-  per-member read cursor. Project chat membership follows project membership.
+  message; `GET /conversations/{id}/messages?before=<cursor>` pages older
+  history by the monotonic message sequence; `?after=<seq>` replays messages
+  newer than a known sequence, oldest first, and returns `nextAfter` while
+  more remain (`before` and `after` are mutually exclusive). `POST
+  /conversations/{id}/read` advances the per-member read cursor. Project chat
+  membership follows project membership.
 - Chat writes and real-time delivery:
   - `POST /conversations/{id}/messages` with an optional `clientMessageId`.
     Retrying the same id returns the stored message with `200` instead of
@@ -148,8 +151,16 @@ roles control access; user IDs in application payloads do not replace authentica
     `conversation.read` frames after a `hello` frame. Clients that miss frames
     (offline, slow consumer, reconnect) resync through the REST history using
     `seq`. Fan-out uses Postgres `LISTEN/NOTIFY`, so multiple API instances
-    stay in sync. `CHAT_WS_ORIGINS` lists allowed cross-origin hosts; the
-    request host is always accepted.
+    stay in sync. Message inserts for one conversation are serialized with a
+    transaction-scoped advisory lock, so `seq` assignment order matches commit
+    order and `after` replay cannot skip a lower sequence that committed
+    late. On reconnect, open the socket first and then replay with
+    `after=<lastSeq>`, deduping overlapping frames and rows by `seq`; fetching
+    first leaves a small window where a message commits between the query and
+    the handshake. `after` covers newly created messages only: edits and
+    deletes keep the original `seq`, so a client that needs those should
+    reload the latest history page. `CHAT_WS_ORIGINS` lists allowed
+    cross-origin hosts; the request host is always accepted.
   - Typing indicators: send `{"type":"typing","conversationId":"<id>",
     "typing":true}` over the stream. The server validates membership, throttles
     repeated start events to one every two seconds, and pushes
