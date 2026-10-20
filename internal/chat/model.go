@@ -116,6 +116,21 @@ type Attachment struct {
 	DeletedAt *time.Time
 }
 
+// StreamToken is a one-time ticket for the WebSocket handshake. The raw
+// value is returned to the client once; only its hash is stored.
+type StreamToken struct {
+	Token string
+
+	ExpiresAt time.Time
+}
+
+// StreamTokenIdentity is the identity recovered by consuming a ticket.
+type StreamTokenIdentity struct {
+	TenantID string
+
+	UserID string
+}
+
 type Message struct {
 	ID       string
 	TenantID string

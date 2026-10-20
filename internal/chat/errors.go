@@ -87,6 +87,10 @@ var (
 		"attachment already attached to a message",
 	)
 
+	ErrInvalidStreamToken = errors.New(
+		"invalid or expired stream token",
+	)
+
 	ErrInvalidCursor = errors.New(
 		"invalid message cursor",
 	)

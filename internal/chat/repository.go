@@ -1510,3 +1510,79 @@ func messageFromDB(row db.Message) Message {
 
 	return message
 }
+
+// -------------------------------------------------------------------------
+// Stream tokens
+// -------------------------------------------------------------------------
+
+type CreateStreamTokenParams struct {
+	TokenHash []byte
+
+	TenantID string
+
+	UserID string
+
+	TTL time.Duration
+}
+
+// CreateStreamToken stores the ticket hash and returns the expiry chosen by
+// the database, so token lifetime does not depend on app/database clock skew.
+func (r *Repository) CreateStreamToken(
+	ctx context.Context,
+	params CreateStreamTokenParams,
+) (time.Time, error) {
+	expiresAt, err := r.queries.CreateChatStreamToken(
+		ctx,
+		db.CreateChatStreamTokenParams{
+			TokenHash: params.TokenHash,
+			TenantID:  params.TenantID,
+			UserID:    params.UserID,
+
+			TtlMilliseconds: int32(params.TTL / time.Millisecond),
+		},
+	)
+	if err != nil {
+		return time.Time{}, fmt.Errorf(
+			"create stream token: %w",
+			err,
+		)
+	}
+
+	return expiresAt.Time, nil
+}
+
+// ConsumeStreamToken deletes and returns a ticket atomically. A ticket can be
+// used once, by any API instance, and expired tickets are never returned.
+func (r *Repository) ConsumeStreamToken(
+	ctx context.Context,
+	tokenHash []byte,
+) (StreamTokenIdentity, error) {
+	row, err := r.queries.ConsumeChatStreamToken(ctx, tokenHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return StreamTokenIdentity{}, ErrInvalidStreamToken
+		}
+
+		return StreamTokenIdentity{}, fmt.Errorf(
+			"consume stream token: %w",
+			err,
+		)
+	}
+
+	return StreamTokenIdentity{
+		TenantID: row.TenantID,
+
+		UserID: row.UserID,
+	}, nil
+}
+
+func (r *Repository) DeleteExpiredStreamTokens(
+	ctx context.Context,
+) (int64, error) {
+	deleted, err := r.queries.DeleteExpiredChatStreamTokens(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired stream tokens: %w", err)
+	}
+
+	return deleted, nil
+}

@@ -459,3 +459,36 @@ WHERE
     AND created_at < sqlc.arg(created_before)::timestamptz
 ORDER BY created_at ASC
 LIMIT sqlc.arg(page_limit);
+
+
+-- Stream tokens
+
+-- name: CreateChatStreamToken :one
+INSERT INTO chat_stream_tokens (
+    token_hash,
+    tenant_id,
+    user_id,
+    expires_at
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    NOW() + sqlc.arg(ttl_milliseconds)::int * INTERVAL '1 millisecond'
+)
+RETURNING expires_at;
+
+
+-- name: ConsumeChatStreamToken :one
+DELETE FROM chat_stream_tokens
+WHERE
+    token_hash = $1
+    AND expires_at > NOW()
+RETURNING
+    tenant_id,
+    user_id;
+
+
+-- name: DeleteExpiredChatStreamTokens :execrows
+DELETE FROM chat_stream_tokens
+WHERE expires_at < NOW();

@@ -276,6 +276,13 @@ func main() {
 		24*time.Hour,
 	)
 
+	// Unused stream tickets expire after a minute; sweeping keeps the
+	// table from growing with abandoned handshakes.
+	go chatService.RunStreamTokenCleanup(
+		ctx,
+		15*time.Minute,
+	)
+
 	chatHandler := chat.NewHandler(
 		chatService,
 		chatHub,
@@ -456,9 +463,21 @@ func main() {
 		handleMe,
 	)
 
-	// Chat WebSocket stream (all conversations of the authenticated user)
+	// One-time ticket for browser WebSocket handshakes (browsers cannot
+	// set custom headers on the upgrade request).
 	router.With(
 		authMiddleware.Authenticate,
+	).Post(
+		"/chat/stream-token",
+		chatHandler.IssueStreamToken,
+	)
+
+	// Chat WebSocket stream (all conversations of the authenticated user).
+	// The route accepts either the normal headers or a one-time token.
+	router.With(
+		streamAuthMiddleware(
+			authMiddleware.Authenticate,
+		),
 	).Get(
 		"/chat/stream",
 		chatHandler.Stream,
@@ -1016,6 +1035,29 @@ func handleHealth(
 			"status": "ok",
 		},
 	)
+}
+
+// streamAuthMiddleware lets the WebSocket route authenticate with a one-time
+// query token instead of the usual headers. The handler consumes the token and
+// establishes the identity itself; when no token is present, header
+// authentication is unchanged.
+func streamAuthMiddleware(
+	authenticate func(http.Handler) http.Handler,
+) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		headerAuth := authenticate(next)
+
+		return http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("token") != "" {
+					next.ServeHTTP(w, r)
+					return
+				}
+
+				headerAuth.ServeHTTP(w, r)
+			},
+		)
+	}
 }
 
 func handleMe(

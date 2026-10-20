@@ -2,6 +2,9 @@ package chat
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +47,12 @@ const (
 	attachmentCleanupBatch = 100
 
 	maxNotificationPreviewRunes = 200
+
+	streamTokenTTL = 60 * time.Second
+
+	streamTokenBytes = 32
+
+	maxStreamTokenLength = 128
 )
 
 // FileStorage is the object-storage subset used by chat attachments.
@@ -1698,4 +1707,134 @@ func normalizeAttachmentIDs(values []string) ([]string, error) {
 	}
 
 	return ids, nil
+}
+
+// IssueStreamToken mints a one-time WebSocket ticket. Browsers cannot set
+// custom headers on a WebSocket handshake, so they fetch this over the normal
+// authenticated REST API and pass the ticket as "?token=...".
+func (s *Service) IssueStreamToken(
+	ctx context.Context,
+	identity auth.Identity,
+) (StreamToken, error) {
+	if identity.TenantID == "" || identity.UserID == "" {
+		return StreamToken{}, fmt.Errorf(
+			"issue stream token: missing identity",
+		)
+	}
+
+	secret := make([]byte, streamTokenBytes)
+
+	if _, err := rand.Read(secret); err != nil {
+		return StreamToken{}, fmt.Errorf(
+			"generate stream token: %w",
+			err,
+		)
+	}
+
+	hash := sha256.Sum256(secret)
+
+	expiresAt, err := s.repository.CreateStreamToken(
+		ctx,
+		CreateStreamTokenParams{
+			TokenHash: hash[:],
+
+			TenantID: identity.TenantID,
+
+			UserID: identity.UserID,
+
+			TTL: streamTokenTTL,
+		},
+	)
+	if err != nil {
+		return StreamToken{}, err
+	}
+
+	return StreamToken{
+		Token: base64.RawURLEncoding.EncodeToString(secret),
+
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
+// ConsumeStreamToken validates and burns a ticket. The caller receives only
+// the user and tenant: the ticket is a transport credential, not a substitute
+// for a full identity profile.
+func (s *Service) ConsumeStreamToken(
+	ctx context.Context,
+	raw string,
+) (auth.Identity, error) {
+	secret, err := decodeStreamToken(raw)
+	if err != nil {
+		return auth.Identity{}, err
+	}
+
+	hash := sha256.Sum256(secret)
+
+	identity, err := s.repository.ConsumeStreamToken(ctx, hash[:])
+	if err != nil {
+		return auth.Identity{}, err
+	}
+
+	return auth.Identity{
+		TenantID: identity.TenantID,
+
+		UserID: identity.UserID,
+	}, nil
+}
+
+func decodeStreamToken(raw string) ([]byte, error) {
+	token := strings.TrimSpace(raw)
+
+	if token == "" || len(token) > maxStreamTokenLength {
+		return nil, ErrInvalidStreamToken
+	}
+
+	secret, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(secret) != streamTokenBytes {
+		return nil, ErrInvalidStreamToken
+	}
+
+	return secret, nil
+}
+
+// RunStreamTokenCleanup removes expired unused tickets until the context is
+// canceled.
+func (s *Service) RunStreamTokenCleanup(
+	ctx context.Context,
+	interval time.Duration,
+) {
+	s.cleanupStreamTokens(ctx)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker.C:
+			s.cleanupStreamTokens(ctx)
+		}
+	}
+}
+
+// CleanupStreamTokens deletes expired tickets. It is exported for the startup
+// worker and tests.
+func (s *Service) CleanupStreamTokens(
+	ctx context.Context,
+) (int64, error) {
+	return s.repository.DeleteExpiredStreamTokens(ctx)
+}
+
+func (s *Service) cleanupStreamTokens(ctx context.Context) {
+	deleted, err := s.CleanupStreamTokens(ctx)
+	if err != nil {
+		log.Printf("cleanup chat stream tokens: %v", err)
+		return
+	}
+
+	if deleted > 0 {
+		log.Printf("removed %d expired chat stream tokens", deleted)
+	}
 }

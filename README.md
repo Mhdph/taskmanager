@@ -136,12 +136,20 @@ roles control access; user IDs in application payloads do not replace authentica
     `DELETE /conversations/{id}/messages/{messageID}` (author or conversation
     owner) edit or tombstone a message.
   - `GET /chat/stream` upgrades to a WebSocket using the same authentication
-    headers. It pushes `message.created`, `message.edited`, `message.deleted`
-    and `conversation.read` frames after a `hello` frame. Clients that miss
-    frames (offline, slow consumer, reconnect) resync through the REST history
-    using `seq`. Fan-out uses Postgres `LISTEN/NOTIFY`, so multiple API
-    instances stay in sync. `CHAT_WS_ORIGINS` lists allowed cross-origin hosts;
-    the request host is always accepted.
+    headers, or a one-time ticket for browser clients. `POST /chat/stream-token`
+    (normal auth headers) returns `{token, expiresAt}` with
+    `Cache-Control: no-store`; open `GET /chat/stream?token=...` within 60
+    seconds. Only the ticket hash is stored, and consuming it deletes the row
+    atomically, so a ticket works once across API instances and replayed or
+    expired tickets get `401`. Fetch a fresh ticket for every reconnect.
+    Tickets are bearer credentials in a query string: avoid logging stream
+    URLs and never cache them. Header authentication keeps working. It pushes
+    `message.created`, `message.edited`, `message.deleted` and
+    `conversation.read` frames after a `hello` frame. Clients that miss frames
+    (offline, slow consumer, reconnect) resync through the REST history using
+    `seq`. Fan-out uses Postgres `LISTEN/NOTIFY`, so multiple API instances
+    stay in sync. `CHAT_WS_ORIGINS` lists allowed cross-origin hosts; the
+    request host is always accepted.
   - Typing indicators: send `{"type":"typing","conversationId":"<id>",
     "typing":true}` over the stream. The server validates membership, throttles
     repeated start events to one every two seconds, and pushes

@@ -50,15 +50,103 @@ type wsClient struct {
 	onFrame func(context.Context, []byte)
 }
 
-// Stream upgrades GET /chat/stream to a WebSocket. Authentication has
-// already run in the chi middleware, using the same headers as the REST
-// API. Browser clients cannot set custom headers on a WebSocket handshake;
-// short-lived stream tokens are the planned follow-up.
-func (h *Handler) Stream(
+type streamTokenResponse struct {
+	Token string `json:"token"`
+
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// IssueStreamToken mints a one-time ticket for the WebSocket handshake. The
+// response must not be cached: it is a bearer credential for the next minute.
+func (h *Handler) IssueStreamToken(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
 	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	token, err := h.service.IssueStreamToken(
+		r.Context(),
+		identity,
+	)
+	if err != nil {
+		h.writeError(w, "issue stream token", err)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/json")
+
+	w.WriteHeader(http.StatusCreated)
+
+	if err := json.NewEncoder(w).Encode(
+		streamTokenResponse{
+			Token: token.Token,
+
+			ExpiresAt: token.ExpiresAt,
+		},
+	); err != nil {
+		log.Printf(
+			"encode stream token: %v",
+			err,
+		)
+	}
+}
+
+// streamIdentity prefers a one-time ticket and falls back to the identity
+// established by the header middleware. The route middleware skips header
+// authentication only when the token query parameter is present.
+func (h *Handler) streamIdentity(
+	w http.ResponseWriter,
+	r *http.Request,
+) (auth.Identity, bool) {
+	raw := r.URL.Query().Get("token")
+	if raw == "" {
+		return h.identity(w, r)
+	}
+
+	identity, err := h.service.ConsumeStreamToken(
+		r.Context(),
+		raw,
+	)
+	if err != nil {
+		if errors.Is(err, ErrInvalidStreamToken) {
+			http.Error(
+				w,
+				"invalid or expired stream token",
+				http.StatusUnauthorized,
+			)
+			return auth.Identity{}, false
+		}
+
+		log.Printf(
+			"chat stream: consume stream token: %v",
+			err,
+		)
+
+		http.Error(
+			w,
+			"failed to authenticate stream",
+			http.StatusInternalServerError,
+		)
+
+		return auth.Identity{}, false
+	}
+
+	return identity, true
+}
+
+// Stream upgrades GET /chat/stream to a WebSocket. Authentication uses the
+// normal REST headers, or a one-time ticket in the token query parameter for
+// browser clients that cannot set headers on the handshake.
+func (h *Handler) Stream(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.streamIdentity(w, r)
 	if !ok {
 		return
 	}

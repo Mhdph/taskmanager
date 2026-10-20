@@ -111,6 +111,28 @@ func (q *Queries) BumpConversationLastMessage(ctx context.Context, arg BumpConve
 	return err
 }
 
+const consumeChatStreamToken = `-- name: ConsumeChatStreamToken :one
+DELETE FROM chat_stream_tokens
+WHERE
+    token_hash = $1
+    AND expires_at > NOW()
+RETURNING
+    tenant_id,
+    user_id
+`
+
+type ConsumeChatStreamTokenRow struct {
+	TenantID string
+	UserID   string
+}
+
+func (q *Queries) ConsumeChatStreamToken(ctx context.Context, tokenHash []byte) (ConsumeChatStreamTokenRow, error) {
+	row := q.db.QueryRow(ctx, consumeChatStreamToken, tokenHash)
+	var i ConsumeChatStreamTokenRow
+	err := row.Scan(&i.TenantID, &i.UserID)
+	return i, err
+}
+
 const createChatAttachment = `-- name: CreateChatAttachment :one
 
 INSERT INTO message_attachments (
@@ -243,6 +265,43 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const createChatStreamToken = `-- name: CreateChatStreamToken :one
+
+INSERT INTO chat_stream_tokens (
+    token_hash,
+    tenant_id,
+    user_id,
+    expires_at
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    NOW() + $4::int * INTERVAL '1 millisecond'
+)
+RETURNING expires_at
+`
+
+type CreateChatStreamTokenParams struct {
+	TokenHash       []byte
+	TenantID        string
+	UserID          string
+	TtlMilliseconds int32
+}
+
+// Stream tokens
+func (q *Queries) CreateChatStreamToken(ctx context.Context, arg CreateChatStreamTokenParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, createChatStreamToken,
+		arg.TokenHash,
+		arg.TenantID,
+		arg.UserID,
+		arg.TtlMilliseconds,
+	)
+	var expires_at pgtype.Timestamptz
+	err := row.Scan(&expires_at)
+	return expires_at, err
 }
 
 const createDMConversation = `-- name: CreateDMConversation :one
@@ -436,6 +495,19 @@ func (q *Queries) DeleteChatMessage(ctx context.Context, arg DeleteChatMessagePa
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const deleteExpiredChatStreamTokens = `-- name: DeleteExpiredChatStreamTokens :execrows
+DELETE FROM chat_stream_tokens
+WHERE expires_at < NOW()
+`
+
+func (q *Queries) DeleteExpiredChatStreamTokens(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredChatStreamTokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deletePendingChatAttachment = `-- name: DeletePendingChatAttachment :execrows
