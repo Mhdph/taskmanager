@@ -169,22 +169,30 @@ roles control access; user IDs in application payloads do not replace authentica
     `typing:false` when the composer empties or loses focus, and expire the
     indicator client-side after a few seconds without a refresh in case a stop
     frame is lost.
-  - Presence: `GET /conversations/{id}/presence` returns the member ids
-    currently connected to this API instance, and the stream pushes
+  - Presence: `GET /conversations/{id}/presence` returns the member ids with a
+    live stream connection on any API instance, and the stream pushes
     `presence.online` / `presence.offline` frames for users who share a
-    conversation. Presence is instance-local in this version; correct
-    multi-instance presence needs a shared lease/heartbeat store.
+    conversation. Each WebSocket connection owns a Postgres presence lease,
+    refreshed by the 30-second ping and expiring after 90 seconds. Per-user
+    advisory locks make connect, release and expiry reconcile the global
+    online state once, then publish the transition through the broker; every
+    instance re-checks the lease before fanning a frame out, so a rapid
+    reconnect cannot deliver an out-of-order final state. Surviving instances
+    sweep expired leases left by a crashed process, and graceful shutdown
+    releases leases immediately. A hard crash can look online until its leases
+    expire; message history replay still covers anything missed in that
+    window.
   - Offline notifications: after a message commits, every member without a
-    live connection on this API instance gets a `chat.message` notification
-    through `NOTIFICATION_SERVICE_URL`, with the project, conversation and
-    message ids, the actor, a title and a 200-character preview (`Sent an
-    attachment` for attachment-only messages). The author is skipped, online
-    members are skipped, and idempotent retries notify only once. Delivery is
+    live lease on any API instance gets a `chat.message` notification through
+    `NOTIFICATION_SERVICE_URL`, with the project, conversation and message ids,
+    the actor, a title and a 200-character preview (`Sent an attachment` for
+    attachment-only messages). The author is skipped, online members are
+    skipped, and idempotent retries notify only once. Presence is one batched
+    shared-store query per message, and if that query fails the notification is
+    still sent (fail open) rather than silently dropped. Delivery is
     best-effort through the bounded dispatcher, so a full queue or a failing
-    notification service never fails the message write. Because presence is
-    instance-local, a member connected to another instance can receive both
-    the stream frame and a notification. Chat notifications stay disabled when
-    `NOTIFICATION_SERVICE_URL` is empty.
+    notification service never fails the message write. Chat notifications
+    stay disabled when `NOTIFICATION_SERVICE_URL` is empty.
   - Attachments are uploaded before the message:
     1. `POST /conversations/{id}/attachments` with multipart field `file`
        returns pending attachment metadata (same size limit as task

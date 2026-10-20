@@ -6,6 +6,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Hub is the in-process fan-out layer: it owns the WebSocket connections
@@ -21,8 +23,15 @@ type Hub struct {
 
 	repository *Repository
 
-	// closed stops presence bookkeeping during shutdown, when every
-	// connection is being torn down anyway.
+	// publisher fans presence transitions out to every API instance.
+	publisher Publisher
+
+	// instanceID identifies this process in presence lease rows. It is
+	// operational metadata; correctness comes from the lease itself.
+	instanceID string
+
+	// closed stops new connections and tells shutdown to release leases
+	// instead of waiting for them to expire.
 	closed bool
 }
 
@@ -31,14 +40,25 @@ type clientKey struct {
 	userID   string
 }
 
-func NewHub(repository *Repository) *Hub {
+func NewHub(repository *Repository, publisher Publisher) *Hub {
 	return &Hub{
 		clients: make(
 			map[clientKey]map[*wsClient]struct{},
 		),
 
 		repository: repository,
+
+		publisher: publisher,
+
+		instanceID: uuid.NewString(),
 	}
+}
+
+func (h *Hub) isClosed() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	return h.closed
 }
 
 func (h *Hub) Register(ctx context.Context, client *wsClient) {
@@ -55,9 +75,11 @@ func (h *Hub) Register(ctx context.Context, client *wsClient) {
 		return
 	}
 
-	connections := h.clients[key]
-	wentOnline := len(connections) == 0
+	if client.connectionID == "" {
+		client.connectionID = uuid.NewString()
+	}
 
+	connections := h.clients[key]
 	if connections == nil {
 		connections = make(map[*wsClient]struct{})
 		h.clients[key] = connections
@@ -67,9 +89,7 @@ func (h *Hub) Register(ctx context.Context, client *wsClient) {
 
 	h.mu.Unlock()
 
-	if wentOnline {
-		h.broadcastPresence(ctx, key, true)
-	}
+	h.touchPresence(ctx, client)
 }
 
 func (h *Hub) Unregister(ctx context.Context, client *wsClient) {
@@ -81,36 +101,17 @@ func (h *Hub) Unregister(ctx context.Context, client *wsClient) {
 	h.mu.Lock()
 
 	connections := h.clients[key]
-	if connections == nil {
-		h.mu.Unlock()
+	if connections != nil {
+		delete(connections, client)
 
-		return
+		if len(connections) == 0 {
+			delete(h.clients, key)
+		}
 	}
-
-	delete(connections, client)
-
-	wentOffline := len(connections) == 0
-	if wentOffline {
-		delete(h.clients, key)
-	}
-
-	closed := h.closed
 
 	h.mu.Unlock()
 
-	if wentOffline && !closed {
-		h.broadcastPresence(ctx, key, false)
-	}
-}
-
-func (h *Hub) IsOnline(
-	tenantID string,
-	userID string,
-) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	return len(h.clients[clientKey{tenantID: tenantID, userID: userID}]) > 0
+	h.releasePresence(ctx, client)
 }
 
 // HandleEvent hydrates a broker event and pushes it to every online member
@@ -133,6 +134,9 @@ func (h *Hub) HandleEvent(
 
 	case EventTyping:
 		h.handleTypingEvent(ctx, event)
+
+	case EventPresenceOnline, EventPresenceOffline:
+		h.handlePresenceEvent(ctx, event)
 
 	default:
 		log.Printf(
@@ -283,22 +287,228 @@ func (h *Hub) handleTypingEvent(
 	h.broadcast(event.TenantID, userIDs, payload)
 }
 
+// touchPresence creates or extends this connection's shared lease. Register
+// calls it once; the WebSocket ping loop calls it as a heartbeat.
+func (h *Hub) touchPresence(ctx context.Context, client *wsClient) {
+	client.presenceMu.Lock()
+	defer client.presenceMu.Unlock()
+
+	if client.presenceDone || h.isClosed() {
+		return
+	}
+
+	if client.presenceHeld {
+		found, err := h.repository.RefreshPresence(
+			ctx,
+			client.connectionID,
+			h.instanceID,
+			presenceLeaseTTL,
+		)
+		if err != nil {
+			log.Printf(
+				"chat hub: refresh presence tenant=%s user=%s: %v",
+				client.tenantID,
+				client.userID,
+				err,
+			)
+			return
+		}
+
+		if found {
+			return
+		}
+	}
+
+	changed, err := h.repository.AcquirePresence(
+		ctx,
+		PresenceLease{
+			ConnectionID: client.connectionID,
+			TenantID:     client.tenantID,
+			UserID:       client.userID,
+			InstanceID:   h.instanceID,
+			TTL:          presenceLeaseTTL,
+		},
+	)
+	if err != nil {
+		log.Printf(
+			"chat hub: acquire presence tenant=%s user=%s: %v",
+			client.tenantID,
+			client.userID,
+			err,
+		)
+		return
+	}
+
+	client.presenceHeld = true
+
+	if changed {
+		h.publishPresence(client.tenantID, client.userID, true)
+	}
+}
+
+// releasePresence removes this connection's lease and publishes the global
+// offline transition when it was the user's last connection.
+func (h *Hub) releasePresence(ctx context.Context, client *wsClient) {
+	client.presenceMu.Lock()
+	defer client.presenceMu.Unlock()
+
+	if client.presenceDone {
+		return
+	}
+
+	client.presenceDone = true
+
+	if !client.presenceHeld {
+		return
+	}
+
+	client.presenceHeld = false
+
+	changed, err := h.repository.ReleasePresence(
+		ctx,
+		client.connectionID,
+		client.tenantID,
+		client.userID,
+	)
+	if err != nil {
+		log.Printf(
+			"chat hub: release presence tenant=%s user=%s: %v",
+			client.tenantID,
+			client.userID,
+			err,
+		)
+		return
+	}
+
+	if changed {
+		h.publishPresence(client.tenantID, client.userID, false)
+	}
+}
+
+// publishPresence emits a transition through the broker. Every instance,
+// including this one, receives it and fans it out to local recipients.
+func (h *Hub) publishPresence(
+	tenantID string,
+	userID string,
+	online bool,
+) {
+	if h.publisher == nil {
+		return
+	}
+
+	kind := EventPresenceOnline
+	if !online {
+		kind = EventPresenceOffline
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	if err := h.publisher.Publish(ctx, Event{
+		Kind:        kind,
+		TenantID:    tenantID,
+		ActorUserID: userID,
+	}); err != nil {
+		log.Printf(
+			"chat hub: publish %s tenant=%s user=%s: %v",
+			kind,
+			tenantID,
+			userID,
+			err,
+		)
+	}
+}
+
+// RunPresenceCleanup sweeps expired leases at startup and then periodically.
+// It must run on every instance: a crashed instance leaves leases behind,
+// and any survivor can reclaim the offline transition once they expire.
+func (h *Hub) RunPresenceCleanup(ctx context.Context) {
+	h.sweepPresence(ctx)
+
+	ticker := time.NewTicker(presenceSweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.sweepPresence(ctx)
+		}
+	}
+}
+
+func (h *Hub) sweepPresence(ctx context.Context) {
+	if h.isClosed() {
+		return
+	}
+
+	updates, err := h.repository.SweepExpiredPresence(
+		ctx,
+		presenceSweepBatch,
+	)
+	if err != nil {
+		log.Printf("chat hub: sweep presence: %v", err)
+		return
+	}
+
+	for _, update := range updates {
+		h.publishPresence(
+			update.TenantID,
+			update.UserID,
+			update.Online,
+		)
+	}
+}
+
+// handlePresenceEvent re-checks the shared store before broadcasting. Events
+// can arrive out of order after a rapid reconnect; the current lease state
+// decides which transition is still true.
+func (h *Hub) handlePresenceEvent(
+	ctx context.Context,
+	event Event,
+) {
+	if event.ActorUserID == "" {
+		return
+	}
+
+	online, err := h.repository.IsUserOnline(
+		ctx,
+		event.TenantID,
+		event.ActorUserID,
+	)
+	if err != nil {
+		log.Printf("chat hub: check presence: %v", err)
+		return
+	}
+
+	if online != (event.Kind == EventPresenceOnline) {
+		return
+	}
+
+	h.broadcastPresence(
+		ctx,
+		event.TenantID,
+		event.ActorUserID,
+		online,
+	)
+}
+
 // broadcastPresence tells every online user who shares a conversation with
 // the actor that the actor came online or went offline.
-//
-// Presence is instance-local: two API instances do not know about each
-// other's connections. Making it correct across instances needs a shared
-// lease/heartbeat store (Redis or a presence table); until then the REST
-// snapshot and these events describe connections handled by this process.
 func (h *Hub) broadcastPresence(
 	ctx context.Context,
-	key clientKey,
+	tenantID string,
+	userID string,
 	online bool,
 ) {
 	conversationIDs, err := h.repository.ListConversationIDsForUser(
 		ctx,
-		key.tenantID,
-		key.userID,
+		tenantID,
+		userID,
 	)
 	if err != nil {
 		log.Printf("chat hub: list presence conversations: %v", err)
@@ -310,7 +520,7 @@ func (h *Hub) broadcastPresence(
 	for _, conversationID := range conversationIDs {
 		members, err := h.repository.ListMembers(
 			ctx,
-			key.tenantID,
+			tenantID,
 			conversationID,
 		)
 		if err != nil {
@@ -319,7 +529,7 @@ func (h *Hub) broadcastPresence(
 		}
 
 		for _, member := range members {
-			if member.UserID != key.userID {
+			if member.UserID != userID {
 				recipients[member.UserID] = struct{}{}
 			}
 		}
@@ -337,7 +547,7 @@ func (h *Hub) broadcastPresence(
 	payload, err := json.Marshal(ClientEvent{
 		Type: string(kind),
 
-		UserID: key.userID,
+		UserID: userID,
 
 		ServerTime: time.Now().UTC(),
 	})
@@ -351,7 +561,7 @@ func (h *Hub) broadcastPresence(
 		userIDs = append(userIDs, userID)
 	}
 
-	h.broadcast(key.tenantID, userIDs, payload)
+	h.broadcast(tenantID, userIDs, payload)
 }
 
 func (h *Hub) broadcast(
@@ -374,9 +584,11 @@ func (h *Hub) broadcast(
 	}
 }
 
-// Close terminates every WebSocket connection. http.Server.Shutdown does
-// not close hijacked connections, so this must run explicitly.
-func (h *Hub) Close() {
+// Close terminates every WebSocket connection and releases its presence
+// lease. http.Server.Shutdown does not close hijacked connections, so this
+// must run explicitly. Releasing synchronously lets other instances see the
+// offline transition immediately instead of waiting for the lease TTL.
+func (h *Hub) Close(ctx context.Context) {
 	h.mu.Lock()
 
 	h.closed = true
@@ -397,5 +609,9 @@ func (h *Hub) Close() {
 
 	for _, client := range clients {
 		client.shutdown()
+	}
+
+	for _, client := range clients {
+		h.releasePresence(ctx, client)
 	}
 }

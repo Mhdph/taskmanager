@@ -67,11 +67,23 @@ func (p *fakePresence) set(userID string, online bool) {
 	p.online[userID] = online
 }
 
-func (p *fakePresence) IsOnline(_ string, userID string) bool {
+func (p *fakePresence) OnlineUserIDs(
+	_ context.Context,
+	_ string,
+	userIDs []string,
+) ([]string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return p.online[userID]
+	online := make([]string, 0, len(userIDs))
+
+	for _, userID := range userIDs {
+		if p.online[userID] {
+			online = append(online, userID)
+		}
+	}
+
+	return online, nil
 }
 
 func TestServiceChatNotificationsTargetOfflineMembers(t *testing.T) {

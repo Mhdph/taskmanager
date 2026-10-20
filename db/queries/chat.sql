@@ -516,3 +516,135 @@ RETURNING
 -- name: DeleteExpiredChatStreamTokens :execrows
 DELETE FROM chat_stream_tokens
 WHERE expires_at < NOW();
+
+
+-- Presence
+
+-- name: LockChatPresence :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(sqlc.arg(lock_key)::text, 0)
+);
+
+
+-- name: UpsertChatPresenceLease :exec
+INSERT INTO chat_presence_leases (
+    connection_id,
+    tenant_id,
+    user_id,
+    instance_id,
+    expires_at
+)
+VALUES (
+    sqlc.arg(connection_id)::uuid,
+    sqlc.arg(tenant_id)::text,
+    sqlc.arg(user_id)::text,
+    sqlc.arg(instance_id)::text,
+    NOW() + sqlc.arg(ttl_milliseconds)::bigint * INTERVAL '1 millisecond'
+)
+ON CONFLICT (connection_id) DO UPDATE SET
+    tenant_id = EXCLUDED.tenant_id,
+    user_id = EXCLUDED.user_id,
+    instance_id = EXCLUDED.instance_id,
+    expires_at = EXCLUDED.expires_at,
+    updated_at = NOW();
+
+
+-- Fast heartbeat path: only extends a lease that is still live. If this
+-- updates zero rows the caller falls back to the full acquire transaction,
+-- which can republish presence.online after a lease was swept.
+-- name: RefreshChatPresenceLease :execrows
+UPDATE chat_presence_leases
+SET
+    expires_at =
+        NOW() + sqlc.arg(ttl_milliseconds)::bigint * INTERVAL '1 millisecond',
+    updated_at = NOW()
+WHERE
+    connection_id = sqlc.arg(connection_id)::uuid
+    AND instance_id = sqlc.arg(instance_id)::text
+    AND expires_at > NOW();
+
+
+-- name: DeleteChatPresenceLease :exec
+DELETE FROM chat_presence_leases
+WHERE connection_id = sqlc.arg(connection_id)::uuid;
+
+
+-- name: DeleteExpiredChatPresenceLeasesForUser :exec
+DELETE FROM chat_presence_leases
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND user_id = sqlc.arg(user_id)::text
+    AND expires_at <= NOW();
+
+
+-- name: CountLiveChatPresenceLeases :one
+SELECT COUNT(*)
+FROM chat_presence_leases
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND user_id = sqlc.arg(user_id)::text
+    AND expires_at > NOW();
+
+
+-- Insert-on-first-online, update-on-offline. The WHERE clause makes the
+-- command return a row only when the state actually changed, so callers can
+-- publish exactly one transition under the per-user advisory lock.
+-- name: MarkChatPresenceOnline :execrows
+INSERT INTO chat_presence (
+    tenant_id,
+    user_id,
+    online,
+    updated_at
+)
+VALUES (
+    sqlc.arg(tenant_id)::text,
+    sqlc.arg(user_id)::text,
+    TRUE,
+    NOW()
+)
+ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+    online = TRUE,
+    updated_at = NOW()
+WHERE chat_presence.online = FALSE;
+
+
+-- name: MarkChatPresenceOffline :execrows
+UPDATE chat_presence
+SET
+    online = FALSE,
+    updated_at = NOW()
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND user_id = sqlc.arg(user_id)::text
+    AND online = TRUE;
+
+
+-- name: IsChatUserOnline :one
+SELECT EXISTS (
+    SELECT 1
+    FROM chat_presence_leases
+    WHERE
+        tenant_id = sqlc.arg(tenant_id)::text
+        AND user_id = sqlc.arg(user_id)::text
+        AND expires_at > NOW()
+);
+
+
+-- name: ListOnlineChatUserIDs :many
+SELECT DISTINCT user_id
+FROM chat_presence_leases
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND user_id = ANY(sqlc.arg(user_ids)::text[])
+    AND expires_at > NOW()
+ORDER BY user_id;
+
+
+-- Sweepers claim users with expired leases in bounded batches, then delete
+-- and reconcile each user under the same advisory lock as connect/release.
+-- name: ListChatPresenceUsersWithExpiredLeases :many
+SELECT DISTINCT tenant_id, user_id
+FROM chat_presence_leases
+WHERE expires_at <= NOW()
+ORDER BY tenant_id, user_id
+LIMIT sqlc.arg(page_limit);

@@ -241,7 +241,7 @@ func main() {
 		chatBroker,
 	)
 
-	chatHub := chat.NewHub(chatRepository)
+	chatHub := chat.NewHub(chatRepository, chatBroker)
 
 	if err := chatBroker.Start(
 		ctx,
@@ -249,6 +249,10 @@ func main() {
 	); err != nil {
 		log.Fatalf("start chat broker: %v", err)
 	}
+
+	// Presence leases expire when an instance dies; every instance sweeps
+	// so a crash is reflected without a central coordinator.
+	go chatHub.RunPresenceCleanup(ctx)
 
 	// Chat is high volume: without a configured notification service,
 	// enqueueing would only log delivery failures for every message.
@@ -264,7 +268,7 @@ func main() {
 		chatBroker,
 		storageClient,
 		cfg.Storage.MaxUploadSize,
-		chatHub,
+		chatRepository,
 		chatNotifications,
 	)
 
@@ -993,8 +997,9 @@ func main() {
 	defer cancelShutdown()
 
 	// http.Server.Shutdown does not close hijacked WebSocket connections,
-	// and would wait for their handlers. Close them first.
-	chatHub.Close()
+	// and would wait for their handlers. Close them and release their
+	// presence leases before draining the server.
+	chatHub.Close(shutdownCtx)
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown server: %v", err)

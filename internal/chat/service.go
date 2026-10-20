@@ -82,11 +82,15 @@ type Publisher interface {
 	Publish(ctx context.Context, event Event) error
 }
 
-// PresenceChecker reports whether a user has a live stream connection on this
+// PresenceChecker reports which users have a live stream connection on any
 // API instance. Offline chat notifications use it to avoid notifying a user
 // who already received the message over WebSocket.
 type PresenceChecker interface {
-	IsOnline(tenantID string, userID string) bool
+	OnlineUserIDs(
+		ctx context.Context,
+		tenantID string,
+		userIDs []string,
+	) ([]string, error)
 }
 
 // NotificationSender enqueues an offline notification (the production
@@ -256,6 +260,48 @@ func (s *Service) Get(
 	}
 
 	return s.detail(ctx, identity.TenantID, conversation.ID)
+}
+
+// OnlineMemberIDs returns the conversation members with a live stream
+// connection on any API instance, preserving member order.
+func (s *Service) OnlineMemberIDs(
+	ctx context.Context,
+	identity auth.Identity,
+	conversationID string,
+) ([]string, error) {
+	detail, err := s.Get(ctx, identity, conversationID)
+	if err != nil {
+		return nil, err
+	}
+
+	userIDs := make([]string, 0, len(detail.Members))
+	for _, member := range detail.Members {
+		userIDs = append(userIDs, member.UserID)
+	}
+
+	online, err := s.repository.OnlineUserIDs(
+		ctx,
+		identity.TenantID,
+		userIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	onlineSet := make(map[string]struct{}, len(online))
+	for _, userID := range online {
+		onlineSet[userID] = struct{}{}
+	}
+
+	result := make([]string, 0, len(online))
+
+	for _, member := range detail.Members {
+		if _, ok := onlineSet[member.UserID]; ok {
+			result = append(result, member.UserID)
+		}
+	}
+
+	return result, nil
 }
 
 // ProjectChat returns the project's conversation, creating it on first
@@ -595,6 +641,35 @@ func (s *Service) notifyMessageCreated(
 	conversationID := conversation.ID
 	messageID := message.ID
 
+	// Presence is shared across instances, so a user connected anywhere is
+	// skipped. One batched query keeps notification fan-out independent of
+	// conversation size.
+	recipients := make([]string, 0, len(members))
+	for _, member := range members {
+		if member.UserID != authorUserID {
+			recipients = append(recipients, member.UserID)
+		}
+	}
+
+	online := map[string]struct{}{}
+
+	if s.presence != nil && len(recipients) > 0 {
+		userIDs, err := s.presence.OnlineUserIDs(
+			ctx,
+			message.TenantID,
+			recipients,
+		)
+		if err != nil {
+			// Fail open: a duplicate notification is better than silently
+			// dropping one because the presence query failed.
+			log.Printf("check chat notification presence: %v", err)
+		} else {
+			for _, userID := range userIDs {
+				online[userID] = struct{}{}
+			}
+		}
+	}
+
 	for _, member := range members {
 		if member.UserID == authorUserID {
 			continue
@@ -602,9 +677,7 @@ func (s *Service) notifyMessageCreated(
 
 		// Online users get the message over the stream; a notification
 		// would duplicate it.
-		if s.presence != nil &&
-			s.presence.IsOnline(message.TenantID, member.UserID) {
-
+		if _, ok := online[member.UserID]; ok {
 			continue
 		}
 

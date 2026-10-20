@@ -133,6 +133,27 @@ func (q *Queries) ConsumeChatStreamToken(ctx context.Context, tokenHash []byte) 
 	return i, err
 }
 
+const countLiveChatPresenceLeases = `-- name: CountLiveChatPresenceLeases :one
+SELECT COUNT(*)
+FROM chat_presence_leases
+WHERE
+    tenant_id = $1::text
+    AND user_id = $2::text
+    AND expires_at > NOW()
+`
+
+type CountLiveChatPresenceLeasesParams struct {
+	TenantID string
+	UserID   string
+}
+
+func (q *Queries) CountLiveChatPresenceLeases(ctx context.Context, arg CountLiveChatPresenceLeasesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveChatPresenceLeases, arg.TenantID, arg.UserID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createChatAttachment = `-- name: CreateChatAttachment :one
 
 INSERT INTO message_attachments (
@@ -497,6 +518,34 @@ func (q *Queries) DeleteChatMessage(ctx context.Context, arg DeleteChatMessagePa
 	return i, err
 }
 
+const deleteChatPresenceLease = `-- name: DeleteChatPresenceLease :exec
+DELETE FROM chat_presence_leases
+WHERE connection_id = $1::uuid
+`
+
+func (q *Queries) DeleteChatPresenceLease(ctx context.Context, connectionID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteChatPresenceLease, connectionID)
+	return err
+}
+
+const deleteExpiredChatPresenceLeasesForUser = `-- name: DeleteExpiredChatPresenceLeasesForUser :exec
+DELETE FROM chat_presence_leases
+WHERE
+    tenant_id = $1::text
+    AND user_id = $2::text
+    AND expires_at <= NOW()
+`
+
+type DeleteExpiredChatPresenceLeasesForUserParams struct {
+	TenantID string
+	UserID   string
+}
+
+func (q *Queries) DeleteExpiredChatPresenceLeasesForUser(ctx context.Context, arg DeleteExpiredChatPresenceLeasesForUserParams) error {
+	_, err := q.db.Exec(ctx, deleteExpiredChatPresenceLeasesForUser, arg.TenantID, arg.UserID)
+	return err
+}
+
 const deleteExpiredChatStreamTokens = `-- name: DeleteExpiredChatStreamTokens :execrows
 DELETE FROM chat_stream_tokens
 WHERE expires_at < NOW()
@@ -790,6 +839,29 @@ func (q *Queries) GetProjectConversation(ctx context.Context, arg GetProjectConv
 	return i, err
 }
 
+const isChatUserOnline = `-- name: IsChatUserOnline :one
+SELECT EXISTS (
+    SELECT 1
+    FROM chat_presence_leases
+    WHERE
+        tenant_id = $1::text
+        AND user_id = $2::text
+        AND expires_at > NOW()
+)
+`
+
+type IsChatUserOnlineParams struct {
+	TenantID string
+	UserID   string
+}
+
+func (q *Queries) IsChatUserOnline(ctx context.Context, arg IsChatUserOnlineParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isChatUserOnline, arg.TenantID, arg.UserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listChatAttachmentsByMessages = `-- name: ListChatAttachmentsByMessages :many
 SELECT id, tenant_id, conversation_id, message_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
 FROM message_attachments
@@ -981,6 +1053,41 @@ func (q *Queries) ListChatMessagesAfter(ctx context.Context, arg ListChatMessage
 			&i.EditedAt,
 			&i.DeletedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatPresenceUsersWithExpiredLeases = `-- name: ListChatPresenceUsersWithExpiredLeases :many
+SELECT DISTINCT tenant_id, user_id
+FROM chat_presence_leases
+WHERE expires_at <= NOW()
+ORDER BY tenant_id, user_id
+LIMIT $1
+`
+
+type ListChatPresenceUsersWithExpiredLeasesRow struct {
+	TenantID string
+	UserID   string
+}
+
+// Sweepers claim users with expired leases in bounded batches, then delete
+// and reconcile each user under the same advisory lock as connect/release.
+func (q *Queries) ListChatPresenceUsersWithExpiredLeases(ctx context.Context, pageLimit int32) ([]ListChatPresenceUsersWithExpiredLeasesRow, error) {
+	rows, err := q.db.Query(ctx, listChatPresenceUsersWithExpiredLeases, pageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChatPresenceUsersWithExpiredLeasesRow
+	for rows.Next() {
+		var i ListChatPresenceUsersWithExpiredLeasesRow
+		if err := rows.Scan(&i.TenantID, &i.UserID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1200,6 +1307,41 @@ func (q *Queries) ListConversationsForUser(ctx context.Context, arg ListConversa
 	return items, nil
 }
 
+const listOnlineChatUserIDs = `-- name: ListOnlineChatUserIDs :many
+SELECT DISTINCT user_id
+FROM chat_presence_leases
+WHERE
+    tenant_id = $1::text
+    AND user_id = ANY($2::text[])
+    AND expires_at > NOW()
+ORDER BY user_id
+`
+
+type ListOnlineChatUserIDsParams struct {
+	TenantID string
+	UserIds  []string
+}
+
+func (q *Queries) ListOnlineChatUserIDs(ctx context.Context, arg ListOnlineChatUserIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listOnlineChatUserIDs, arg.TenantID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var user_id string
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStalePendingChatAttachments = `-- name: ListStalePendingChatAttachments :many
 SELECT id, tenant_id, conversation_id, message_id, uploaded_by_user_id, filename, content_type, size_bytes, object_key, created_at, deleted_at
 FROM message_attachments
@@ -1263,6 +1405,78 @@ func (q *Queries) LockChatConversation(ctx context.Context, lockKey string) erro
 	return err
 }
 
+const lockChatPresence = `-- name: LockChatPresence :exec
+
+SELECT pg_advisory_xact_lock(
+    hashtextextended($1::text, 0)
+)
+`
+
+// Presence
+func (q *Queries) LockChatPresence(ctx context.Context, lockKey string) error {
+	_, err := q.db.Exec(ctx, lockChatPresence, lockKey)
+	return err
+}
+
+const markChatPresenceOffline = `-- name: MarkChatPresenceOffline :execrows
+UPDATE chat_presence
+SET
+    online = FALSE,
+    updated_at = NOW()
+WHERE
+    tenant_id = $1::text
+    AND user_id = $2::text
+    AND online = TRUE
+`
+
+type MarkChatPresenceOfflineParams struct {
+	TenantID string
+	UserID   string
+}
+
+func (q *Queries) MarkChatPresenceOffline(ctx context.Context, arg MarkChatPresenceOfflineParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markChatPresenceOffline, arg.TenantID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markChatPresenceOnline = `-- name: MarkChatPresenceOnline :execrows
+INSERT INTO chat_presence (
+    tenant_id,
+    user_id,
+    online,
+    updated_at
+)
+VALUES (
+    $1::text,
+    $2::text,
+    TRUE,
+    NOW()
+)
+ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+    online = TRUE,
+    updated_at = NOW()
+WHERE chat_presence.online = FALSE
+`
+
+type MarkChatPresenceOnlineParams struct {
+	TenantID string
+	UserID   string
+}
+
+// Insert-on-first-online, update-on-offline. The WHERE clause makes the
+// command return a row only when the state actually changed, so callers can
+// publish exactly one transition under the per-user advisory lock.
+func (q *Queries) MarkChatPresenceOnline(ctx context.Context, arg MarkChatPresenceOnlineParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markChatPresenceOnline, arg.TenantID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneProjectConversationMembers = `-- name: PruneProjectConversationMembers :exec
 DELETE FROM conversation_members cm
 WHERE
@@ -1290,6 +1504,35 @@ type PruneProjectConversationMembersParams struct {
 func (q *Queries) PruneProjectConversationMembers(ctx context.Context, arg PruneProjectConversationMembersParams) error {
 	_, err := q.db.Exec(ctx, pruneProjectConversationMembers, arg.TenantID, arg.ConversationID, arg.ProjectID)
 	return err
+}
+
+const refreshChatPresenceLease = `-- name: RefreshChatPresenceLease :execrows
+UPDATE chat_presence_leases
+SET
+    expires_at =
+        NOW() + $1::bigint * INTERVAL '1 millisecond',
+    updated_at = NOW()
+WHERE
+    connection_id = $2::uuid
+    AND instance_id = $3::text
+    AND expires_at > NOW()
+`
+
+type RefreshChatPresenceLeaseParams struct {
+	TtlMilliseconds int64
+	ConnectionID    pgtype.UUID
+	InstanceID      string
+}
+
+// Fast heartbeat path: only extends a lease that is still live. If this
+// updates zero rows the caller falls back to the full acquire transaction,
+// which can republish presence.online after a lease was swept.
+func (q *Queries) RefreshChatPresenceLease(ctx context.Context, arg RefreshChatPresenceLeaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, refreshChatPresenceLease, arg.TtlMilliseconds, arg.ConnectionID, arg.InstanceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const removeConversationMember = `-- name: RemoveConversationMember :execrows
@@ -1435,4 +1678,46 @@ func (q *Queries) UpdateConversationReadCursor(ctx context.Context, arg UpdateCo
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertChatPresenceLease = `-- name: UpsertChatPresenceLease :exec
+INSERT INTO chat_presence_leases (
+    connection_id,
+    tenant_id,
+    user_id,
+    instance_id,
+    expires_at
+)
+VALUES (
+    $1::uuid,
+    $2::text,
+    $3::text,
+    $4::text,
+    NOW() + $5::bigint * INTERVAL '1 millisecond'
+)
+ON CONFLICT (connection_id) DO UPDATE SET
+    tenant_id = EXCLUDED.tenant_id,
+    user_id = EXCLUDED.user_id,
+    instance_id = EXCLUDED.instance_id,
+    expires_at = EXCLUDED.expires_at,
+    updated_at = NOW()
+`
+
+type UpsertChatPresenceLeaseParams struct {
+	ConnectionID    pgtype.UUID
+	TenantID        string
+	UserID          string
+	InstanceID      string
+	TtlMilliseconds int64
+}
+
+func (q *Queries) UpsertChatPresenceLease(ctx context.Context, arg UpsertChatPresenceLeaseParams) error {
+	_, err := q.db.Exec(ctx, upsertChatPresenceLease,
+		arg.ConnectionID,
+		arg.TenantID,
+		arg.UserID,
+		arg.InstanceID,
+		arg.TtlMilliseconds,
+	)
+	return err
 }

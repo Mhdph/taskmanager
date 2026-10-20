@@ -423,7 +423,7 @@ type presenceResponse struct {
 	UserIDs []string `json:"userIds"`
 }
 
-// Presence returns the conversation members currently connected to this API
+// Presence returns the conversation members currently connected to any API
 // instance.
 func (h *Handler) Presence(
 	w http.ResponseWriter,
@@ -434,7 +434,7 @@ func (h *Handler) Presence(
 		return
 	}
 
-	detail, err := h.service.Get(
+	userIDs, err := h.service.OnlineMemberIDs(
 		r.Context(),
 		identity,
 		chi.URLParam(r, "conversationID"),
@@ -442,14 +442,6 @@ func (h *Handler) Presence(
 	if err != nil {
 		h.writeError(w, "conversation presence", err)
 		return
-	}
-
-	userIDs := make([]string, 0, len(detail.Members))
-
-	for _, member := range detail.Members {
-		if h.hub.IsOnline(identity.TenantID, member.UserID) {
-			userIDs = append(userIDs, member.UserID)
-		}
 	}
 
 	w.Header().Set(

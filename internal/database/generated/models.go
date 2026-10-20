@@ -21,6 +21,23 @@ type AuditLog struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ChatPresence struct {
+	TenantID  string
+	UserID    string
+	Online    bool
+	UpdatedAt pgtype.Timestamptz
+}
+
+type ChatPresenceLease struct {
+	ConnectionID pgtype.UUID
+	TenantID     string
+	UserID       string
+	InstanceID   string
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type ChatStreamToken struct {
 	TokenHash []byte
 	TenantID  string

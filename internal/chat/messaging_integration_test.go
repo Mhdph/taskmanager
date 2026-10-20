@@ -345,7 +345,7 @@ func TestHubHydratesAndRoutesEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hub := NewHub(repository)
+	hub := NewHub(repository, nil)
 
 	bobClient := &wsClient{
 		tenantID: tenant,
@@ -523,7 +523,9 @@ func TestHubTypingAndPresence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hub := NewHub(repository)
+	publisher := &recordingPublisher{}
+
+	hub := NewHub(repository, publisher)
 
 	bobClient := &wsClient{
 		tenantID: tenant,
@@ -542,9 +544,22 @@ func TestHubTypingAndPresence(t *testing.T) {
 		hub.Unregister(ctx, bobClient)
 	})
 
-	// Bob was already online, so Alice's first connection produces his
-	// presence.online frame.
+	// Alice's first connection commits the shared online transition. In
+	// production the broker echoes it back to every instance; here the test
+	// feeds it to the hub directly.
 	hub.Register(ctx, aliceClient)
+
+	if len(publisher.events) == 0 {
+		t.Fatal("no presence transition was published")
+	}
+
+	onlineEvent := publisher.events[len(publisher.events)-1]
+	if onlineEvent.Kind != EventPresenceOnline ||
+		onlineEvent.ActorUserID != "alice" {
+		t.Fatalf("published online event = %+v", onlineEvent)
+	}
+
+	hub.HandleEvent(ctx, onlineEvent)
 
 	online := readClientEvent(t, bobClient.send)
 	if online.Type != string(EventPresenceOnline) || online.UserID != "alice" {
@@ -586,6 +601,18 @@ func TestHubTypingAndPresence(t *testing.T) {
 	assertNoFrame(t, aliceClient.send)
 
 	hub.Unregister(ctx, aliceClient)
+
+	if len(publisher.events) == 0 {
+		t.Fatal("no offline transition was published")
+	}
+
+	offlineEvent := publisher.events[len(publisher.events)-1]
+	if offlineEvent.Kind != EventPresenceOffline ||
+		offlineEvent.ActorUserID != "alice" {
+		t.Fatalf("published offline event = %+v", offlineEvent)
+	}
+
+	hub.HandleEvent(ctx, offlineEvent)
 
 	offline := readClientEvent(t, bobClient.send)
 	if offline.Type != string(EventPresenceOffline) || offline.UserID != "alice" {

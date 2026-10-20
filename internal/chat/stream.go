@@ -39,6 +39,16 @@ type wsClient struct {
 	tenantID string
 	userID   string
 
+	// connectionID owns one shared presence lease.
+	connectionID string
+
+	// presenceMu serializes acquire/refresh/release for this connection,
+	// including a shutdown racing the ping heartbeat.
+	presenceMu sync.Mutex
+
+	presenceHeld bool
+	presenceDone bool
+
 	send chan []byte
 
 	cancel context.CancelFunc
@@ -332,6 +342,17 @@ func (c *wsClient) writePump(ctx context.Context) {
 				c.shutdown()
 				return
 			}
+
+			// A successful ping proves the peer is alive, so it also
+			// renews the shared presence lease.
+			heartbeatCtx, heartbeatCancel := context.WithTimeout(
+				ctx,
+				5*time.Second,
+			)
+
+			c.hub.touchPresence(heartbeatCtx, c)
+
+			heartbeatCancel()
 		}
 	}
 }
@@ -352,8 +373,12 @@ func (c *wsClient) enqueue(payload []byte) {
 
 func (c *wsClient) shutdown() {
 	c.closeOnce.Do(func() {
-		c.cancel()
+		if c.cancel != nil {
+			c.cancel()
+		}
 
-		_ = c.conn.CloseNow()
+		if c.conn != nil {
+			_ = c.conn.CloseNow()
+		}
 	})
 }
