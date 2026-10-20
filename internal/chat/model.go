@@ -150,6 +150,10 @@ type Message struct {
 	// ClientMessageID is the sender-provided idempotency key.
 	ClientMessageID *string
 
+	// Mentions lists the conversation members mentioned in the body. It is
+	// resolved when the message is written and edited.
+	Mentions []string
+
 	Attachments []Attachment
 
 	CreatedAt time.Time

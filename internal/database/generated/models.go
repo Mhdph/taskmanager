@@ -70,6 +70,14 @@ type ConversationMember struct {
 	JoinedAt       pgtype.Timestamptz
 }
 
+type ConversationNotificationPreference struct {
+	ConversationID pgtype.UUID
+	TenantID       string
+	UserID         string
+	Mode           string
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type FavoriteProject struct {
 	TenantID  string
 	ProjectID pgtype.UUID
@@ -95,17 +103,18 @@ type Label struct {
 }
 
 type Message struct {
-	ID              pgtype.UUID
-	TenantID        string
-	ConversationID  pgtype.UUID
-	Seq             int64
-	Kind            string
-	AuthorUserID    pgtype.Text
-	Body            string
-	ClientMessageID pgtype.Text
-	CreatedAt       pgtype.Timestamptz
-	EditedAt        pgtype.Timestamptz
-	DeletedAt       pgtype.Timestamptz
+	ID               pgtype.UUID
+	TenantID         string
+	ConversationID   pgtype.UUID
+	Seq              int64
+	Kind             string
+	AuthorUserID     pgtype.Text
+	Body             string
+	ClientMessageID  pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	EditedAt         pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
+	MentionedUserIds []string
 }
 
 type MessageAttachment struct {

@@ -182,17 +182,34 @@ roles control access; user IDs in application payloads do not replace authentica
     releases leases immediately. A hard crash can look online until its leases
     expire; message history replay still covers anything missed in that
     window.
+  - Notification preferences: `GET /conversations/{id}/notification-preference`
+    returns the caller's mode and `PUT` stores it with
+    `{"mode":"all|mentions|mute"}`. Preferences are per conversation and
+    per member; `all` is the default. `mentions` notifies only when the
+    member is mentioned, `mute` silences the conversation. Muting only
+    affects push notifications: the WebSocket stream still delivers every
+    message, and unread counts are unchanged.
+  - Mentions: a message body mentions a member with `@` followed by that
+    member's user id (`@alice`). Mentions are resolved once, against the
+    conversation members, when the message is written, and re-resolved when
+    the message is edited. The resolved list is stored on the message and
+    returned as `mentionedUserIds` in REST history and WebSocket frames.
+    A mention must be a standalone word: `alice@example.com` and `@alice2`
+    are not mentions, and the longest matching id wins (`@alice.bob` mentions
+    `alice.bob`, not `alice`).
   - Offline notifications: after a message commits, every member without a
     live lease on any API instance gets a `chat.message` notification through
     `NOTIFICATION_SERVICE_URL`, with the project, conversation and message ids,
     the actor, a title and a 200-character preview (`Sent an attachment` for
     attachment-only messages). The author is skipped, online members are
-    skipped, and idempotent retries notify only once. Presence is one batched
-    shared-store query per message, and if that query fails the notification is
-    still sent (fail open) rather than silently dropped. Delivery is
-    best-effort through the bounded dispatcher, so a full queue or a failing
-    notification service never fails the message write. Chat notifications
-    stay disabled when `NOTIFICATION_SERVICE_URL` is empty.
+    skipped, muted members are skipped, mention-only members are skipped
+    unless the message mentions them, and idempotent retries notify only
+    once. Presence is one batched shared-store query per message, and if that
+    query fails the notification is still sent (fail open) rather than
+    silently dropped. Delivery is best-effort through the bounded dispatcher,
+    so a full queue or a failing notification service never fails the message
+    write. Chat notifications stay disabled when `NOTIFICATION_SERVICE_URL` is
+    empty.
   - Attachments are uploaded before the message:
     1. `POST /conversations/{id}/attachments` with multipart field `file`
        returns pending attachment metadata (same size limit as task

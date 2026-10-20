@@ -423,6 +423,14 @@ type presenceResponse struct {
 	UserIDs []string `json:"userIds"`
 }
 
+type notificationPreferenceResponse struct {
+	Mode string `json:"mode"`
+}
+
+type setNotificationPreferenceRequest struct {
+	Mode string `json:"mode"`
+}
+
 // Presence returns the conversation members currently connected to any API
 // instance.
 func (h *Handler) Presence(
@@ -454,6 +462,100 @@ func (h *Handler) Presence(
 	); err != nil {
 		log.Printf(
 			"encode conversation presence: %v",
+			err,
+		)
+	}
+}
+
+// GetNotificationPreference returns the caller's notification mode for the
+// conversation.
+func (h *Handler) GetNotificationPreference(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	mode, err := h.service.GetNotificationPreference(
+		r.Context(),
+		identity,
+		chi.URLParam(r, "conversationID"),
+	)
+	if err != nil {
+		h.writeError(w, "get notification preference", err)
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		notificationPreferenceResponse{Mode: string(mode)},
+	); err != nil {
+		log.Printf(
+			"encode notification preference: %v",
+			err,
+		)
+	}
+}
+
+// SetNotificationPreference stores the caller's notification mode for the
+// conversation.
+func (h *Handler) SetNotificationPreference(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+
+	var req setNotificationPreferenceRequest
+
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		http.Error(
+			w,
+			httpx.DecodeErrorMessage(err),
+			httpx.DecodeErrorStatus(err),
+		)
+		return
+	}
+
+	mode, err := ParseNotificationMode(req.Mode)
+	if err != nil {
+		http.Error(
+			w,
+			ErrInvalidNotificationMode.Error(),
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	mode, err = h.service.SetNotificationPreference(
+		r.Context(),
+		identity,
+		chi.URLParam(r, "conversationID"),
+		mode,
+	)
+	if err != nil {
+		h.writeError(w, "set notification preference", err)
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	if err := json.NewEncoder(w).Encode(
+		notificationPreferenceResponse{Mode: string(mode)},
+	); err != nil {
+		log.Printf(
+			"encode notification preference: %v",
 			err,
 		)
 	}
@@ -1010,6 +1112,7 @@ func (h *Handler) writeError(
 		errors.Is(err, ErrInvalidClientMessageID),
 		errors.Is(err, ErrInvalidAttachment),
 		errors.Is(err, ErrInvalidAttachmentFilename),
+		errors.Is(err, ErrInvalidNotificationMode),
 		errors.Is(err, ErrTooManyAttachments):
 
 		http.Error(

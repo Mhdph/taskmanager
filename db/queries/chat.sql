@@ -272,7 +272,8 @@ INSERT INTO messages (
     kind,
     author_user_id,
     body,
-    client_message_id
+    client_message_id,
+    mentioned_user_ids
 )
 VALUES (
     $1,
@@ -281,7 +282,8 @@ VALUES (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
 ON CONFLICT (
     tenant_id,
@@ -369,6 +371,7 @@ WHERE
 UPDATE messages
 SET
     body = sqlc.arg(body)::text,
+    mentioned_user_ids = sqlc.arg(mentioned_user_ids)::text[],
     edited_at = NOW()
 WHERE
     tenant_id = sqlc.arg(tenant_id)::text
@@ -383,6 +386,7 @@ RETURNING *;
 UPDATE messages
 SET
     body = '',
+    mentioned_user_ids = '{}',
     deleted_at = NOW(),
     edited_at = NULL
 WHERE
@@ -648,3 +652,49 @@ FROM chat_presence_leases
 WHERE expires_at <= NOW()
 ORDER BY tenant_id, user_id
 LIMIT sqlc.arg(page_limit);
+
+
+-- Notification preferences
+
+-- name: ListChatMemberUserIDs :many
+SELECT user_id
+FROM conversation_members
+WHERE conversation_id = sqlc.arg(conversation_id)::uuid
+ORDER BY user_id ASC;
+
+
+-- name: GetChatNotificationPreference :one
+SELECT mode
+FROM conversation_notification_preferences
+WHERE
+    conversation_id = sqlc.arg(conversation_id)::uuid
+    AND user_id = sqlc.arg(user_id)::text;
+
+
+-- name: UpsertChatNotificationPreference :exec
+INSERT INTO conversation_notification_preferences (
+    conversation_id,
+    tenant_id,
+    user_id,
+    mode
+)
+VALUES (
+    sqlc.arg(conversation_id)::uuid,
+    sqlc.arg(tenant_id)::text,
+    sqlc.arg(user_id)::text,
+    sqlc.arg(mode)::text
+)
+ON CONFLICT (conversation_id, user_id) DO UPDATE SET
+    mode = EXCLUDED.mode,
+    updated_at = NOW();
+
+
+-- name: ListChatNotificationPreferences :many
+SELECT
+    user_id,
+    mode
+FROM conversation_notification_preferences
+WHERE
+    tenant_id = sqlc.arg(tenant_id)::text
+    AND conversation_id = sqlc.arg(conversation_id)::uuid
+    AND user_id = ANY(sqlc.arg(user_ids)::text[]);

@@ -114,6 +114,9 @@ type WireMessage struct {
 
 	ClientMessageID *string `json:"clientMessageId"`
 
+	// MentionedUserIDs are the members mentioned in the body.
+	MentionedUserIDs []string `json:"mentionedUserIds,omitempty"`
+
 	Attachments []WireAttachment `json:"attachments"`
 
 	CreatedAt time.Time `json:"createdAt"`
@@ -138,6 +141,8 @@ func NewWireMessage(item Message) WireMessage {
 		Body: item.Body,
 
 		ClientMessageID: item.ClientMessageID,
+
+		MentionedUserIDs: item.Mentions,
 
 		Attachments: newWireAttachments(item.Attachments),
 

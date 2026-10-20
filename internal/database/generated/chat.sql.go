@@ -228,7 +228,8 @@ INSERT INTO messages (
     kind,
     author_user_id,
     body,
-    client_message_id
+    client_message_id,
+    mentioned_user_ids
 )
 VALUES (
     $1,
@@ -237,7 +238,8 @@ VALUES (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
 ON CONFLICT (
     tenant_id,
@@ -247,17 +249,18 @@ ON CONFLICT (
 )
     WHERE kind = 'user' AND client_message_id IS NOT NULL
 DO NOTHING
-RETURNING id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+RETURNING id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at, mentioned_user_ids
 `
 
 type CreateChatMessageParams struct {
-	ID              pgtype.UUID
-	TenantID        string
-	ConversationID  pgtype.UUID
-	Kind            string
-	AuthorUserID    pgtype.Text
-	Body            string
-	ClientMessageID pgtype.Text
+	ID               pgtype.UUID
+	TenantID         string
+	ConversationID   pgtype.UUID
+	Kind             string
+	AuthorUserID     pgtype.Text
+	Body             string
+	ClientMessageID  pgtype.Text
+	MentionedUserIds []string
 }
 
 // Messages
@@ -270,6 +273,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		arg.AuthorUserID,
 		arg.Body,
 		arg.ClientMessageID,
+		arg.MentionedUserIds,
 	)
 	var i Message
 	err := row.Scan(
@@ -284,6 +288,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.MentionedUserIds,
 	)
 	return i, err
 }
@@ -482,6 +487,7 @@ const deleteChatMessage = `-- name: DeleteChatMessage :one
 UPDATE messages
 SET
     body = '',
+    mentioned_user_ids = '{}',
     deleted_at = NOW(),
     edited_at = NULL
 WHERE
@@ -490,7 +496,7 @@ WHERE
     AND id = $3::uuid
     AND kind = 'user'
     AND deleted_at IS NULL
-RETURNING id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+RETURNING id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at, mentioned_user_ids
 `
 
 type DeleteChatMessageParams struct {
@@ -514,6 +520,7 @@ func (q *Queries) DeleteChatMessage(ctx context.Context, arg DeleteChatMessagePa
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.MentionedUserIds,
 	)
 	return i, err
 }
@@ -593,26 +600,29 @@ const editChatMessage = `-- name: EditChatMessage :one
 UPDATE messages
 SET
     body = $1::text,
+    mentioned_user_ids = $2::text[],
     edited_at = NOW()
 WHERE
-    tenant_id = $2::text
-    AND conversation_id = $3::uuid
-    AND id = $4::uuid
+    tenant_id = $3::text
+    AND conversation_id = $4::uuid
+    AND id = $5::uuid
     AND kind = 'user'
     AND deleted_at IS NULL
-RETURNING id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+RETURNING id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at, mentioned_user_ids
 `
 
 type EditChatMessageParams struct {
-	Body           string
-	TenantID       string
-	ConversationID pgtype.UUID
-	ID             pgtype.UUID
+	Body             string
+	MentionedUserIds []string
+	TenantID         string
+	ConversationID   pgtype.UUID
+	ID               pgtype.UUID
 }
 
 func (q *Queries) EditChatMessage(ctx context.Context, arg EditChatMessageParams) (Message, error) {
 	row := q.db.QueryRow(ctx, editChatMessage,
 		arg.Body,
+		arg.MentionedUserIds,
 		arg.TenantID,
 		arg.ConversationID,
 		arg.ID,
@@ -630,6 +640,7 @@ func (q *Queries) EditChatMessage(ctx context.Context, arg EditChatMessageParams
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.MentionedUserIds,
 	)
 	return i, err
 }
@@ -670,7 +681,7 @@ func (q *Queries) GetChatAttachment(ctx context.Context, arg GetChatAttachmentPa
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at, mentioned_user_ids
 FROM messages
 WHERE
     tenant_id = $1
@@ -699,12 +710,13 @@ func (q *Queries) GetChatMessage(ctx context.Context, arg GetChatMessageParams) 
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.MentionedUserIds,
 	)
 	return i, err
 }
 
 const getChatMessageByClientID = `-- name: GetChatMessageByClientID :one
-SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at, mentioned_user_ids
 FROM messages
 WHERE
     tenant_id = $1
@@ -740,8 +752,29 @@ func (q *Queries) GetChatMessageByClientID(ctx context.Context, arg GetChatMessa
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.MentionedUserIds,
 	)
 	return i, err
+}
+
+const getChatNotificationPreference = `-- name: GetChatNotificationPreference :one
+SELECT mode
+FROM conversation_notification_preferences
+WHERE
+    conversation_id = $1::uuid
+    AND user_id = $2::text
+`
+
+type GetChatNotificationPreferenceParams struct {
+	ConversationID pgtype.UUID
+	UserID         string
+}
+
+func (q *Queries) GetChatNotificationPreference(ctx context.Context, arg GetChatNotificationPreferenceParams) (string, error) {
+	row := q.db.QueryRow(ctx, getChatNotificationPreference, arg.ConversationID, arg.UserID)
+	var mode string
+	err := row.Scan(&mode)
+	return mode, err
 }
 
 const getConversation = `-- name: GetConversation :one
@@ -947,8 +980,37 @@ func (q *Queries) ListChatConversationIDsForUser(ctx context.Context, arg ListCh
 	return items, nil
 }
 
+const listChatMemberUserIDs = `-- name: ListChatMemberUserIDs :many
+
+SELECT user_id
+FROM conversation_members
+WHERE conversation_id = $1::uuid
+ORDER BY user_id ASC
+`
+
+// Notification preferences
+func (q *Queries) ListChatMemberUserIDs(ctx context.Context, conversationID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listChatMemberUserIDs, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var user_id string
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at, mentioned_user_ids
 FROM messages
 WHERE
     tenant_id = $1::text
@@ -994,6 +1056,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, arg ListChatMessagesPara
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
+			&i.MentionedUserIds,
 		); err != nil {
 			return nil, err
 		}
@@ -1006,7 +1069,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, arg ListChatMessagesPara
 }
 
 const listChatMessagesAfter = `-- name: ListChatMessagesAfter :many
-SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at
+SELECT id, tenant_id, conversation_id, seq, kind, author_user_id, body, client_message_id, created_at, edited_at, deleted_at, mentioned_user_ids
 FROM messages
 WHERE
     tenant_id = $1::text
@@ -1052,7 +1115,50 @@ func (q *Queries) ListChatMessagesAfter(ctx context.Context, arg ListChatMessage
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
+			&i.MentionedUserIds,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatNotificationPreferences = `-- name: ListChatNotificationPreferences :many
+SELECT
+    user_id,
+    mode
+FROM conversation_notification_preferences
+WHERE
+    tenant_id = $1::text
+    AND conversation_id = $2::uuid
+    AND user_id = ANY($3::text[])
+`
+
+type ListChatNotificationPreferencesParams struct {
+	TenantID       string
+	ConversationID pgtype.UUID
+	UserIds        []string
+}
+
+type ListChatNotificationPreferencesRow struct {
+	UserID string
+	Mode   string
+}
+
+func (q *Queries) ListChatNotificationPreferences(ctx context.Context, arg ListChatNotificationPreferencesParams) ([]ListChatNotificationPreferencesRow, error) {
+	rows, err := q.db.Query(ctx, listChatNotificationPreferences, arg.TenantID, arg.ConversationID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChatNotificationPreferencesRow
+	for rows.Next() {
+		var i ListChatNotificationPreferencesRow
+		if err := rows.Scan(&i.UserID, &i.Mode); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1678,6 +1784,41 @@ func (q *Queries) UpdateConversationReadCursor(ctx context.Context, arg UpdateCo
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertChatNotificationPreference = `-- name: UpsertChatNotificationPreference :exec
+INSERT INTO conversation_notification_preferences (
+    conversation_id,
+    tenant_id,
+    user_id,
+    mode
+)
+VALUES (
+    $1::uuid,
+    $2::text,
+    $3::text,
+    $4::text
+)
+ON CONFLICT (conversation_id, user_id) DO UPDATE SET
+    mode = EXCLUDED.mode,
+    updated_at = NOW()
+`
+
+type UpsertChatNotificationPreferenceParams struct {
+	ConversationID pgtype.UUID
+	TenantID       string
+	UserID         string
+	Mode           string
+}
+
+func (q *Queries) UpsertChatNotificationPreference(ctx context.Context, arg UpsertChatNotificationPreferenceParams) error {
+	_, err := q.db.Exec(ctx, upsertChatNotificationPreference,
+		arg.ConversationID,
+		arg.TenantID,
+		arg.UserID,
+		arg.Mode,
+	)
+	return err
 }
 
 const upsertChatPresenceLease = `-- name: UpsertChatPresenceLease :exec

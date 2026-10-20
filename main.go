@@ -740,6 +740,16 @@ func main() {
 						chatHandler.Presence,
 					)
 
+					r.Get(
+						"/notification-preference",
+						chatHandler.GetNotificationPreference,
+					)
+
+					r.Put(
+						"/notification-preference",
+						chatHandler.SetNotificationPreference,
+					)
+
 					r.Post(
 						"/attachments",
 						chatHandler.UploadAttachment,

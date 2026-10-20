@@ -422,6 +422,45 @@ func (r *Repository) ListMembers(
 	return members, nil
 }
 
+// resolveMentions returns the members mentioned in body. The result is
+// never nil so it can be stored in a NOT NULL array column.
+func (r *Repository) resolveMentions(
+	ctx context.Context,
+	qtx *db.Queries,
+	conversationID string,
+	body string,
+) ([]string, error) {
+	memberUserIDs, err := r.listMemberUserIDs(ctx, qtx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+
+	mentions := parseMentions(body, memberUserIDs)
+	if mentions == nil {
+		mentions = []string{}
+	}
+
+	return mentions, nil
+}
+
+func (r *Repository) listMemberUserIDs(
+	ctx context.Context,
+	qtx *db.Queries,
+	conversationID string,
+) ([]string, error) {
+	id, err := parseUUID(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("parse conversation id: %w", err)
+	}
+
+	userIDs, err := qtx.ListChatMemberUserIDs(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation member ids: %w", err)
+	}
+
+	return userIDs, nil
+}
+
 func (r *Repository) GetMember(
 	ctx context.Context,
 	tenantID string,
@@ -680,16 +719,30 @@ func (r *Repository) CreateMessage(
 		)
 	}
 
+	// Mentions are resolved once, against the members that exist when the
+	// message is written, and stored with it. Notification routing and
+	// clients then read the same list.
+	mentions, err := r.resolveMentions(
+		ctx,
+		qtx,
+		params.ConversationID,
+		params.Body,
+	)
+	if err != nil {
+		return Message{}, false, err
+	}
+
 	row, err := qtx.CreateChatMessage(
 		ctx,
 		db.CreateChatMessageParams{
-			ID:              messageID,
-			TenantID:        params.TenantID,
-			ConversationID:  conversationID,
-			Kind:            string(params.Kind),
-			AuthorUserID:    textValue(params.AuthorUserID),
-			Body:            params.Body,
-			ClientMessageID: textValue(params.ClientMessageID),
+			ID:               messageID,
+			TenantID:         params.TenantID,
+			ConversationID:   conversationID,
+			Kind:             string(params.Kind),
+			AuthorUserID:     textValue(params.AuthorUserID),
+			Body:             params.Body,
+			ClientMessageID:  textValue(params.ClientMessageID),
+			MentionedUserIds: mentions,
 		},
 	)
 
@@ -955,13 +1008,26 @@ func (r *Repository) EditMessage(
 
 	qtx := r.queries.WithTx(tx)
 
+	// An edit can add or remove mentions, so the stored list is resolved
+	// again against the current members.
+	mentions, err := r.resolveMentions(
+		ctx,
+		qtx,
+		conversationID,
+		body,
+	)
+	if err != nil {
+		return Message{}, err
+	}
+
 	row, err := qtx.EditChatMessage(
 		ctx,
 		db.EditChatMessageParams{
-			Body:           body,
-			TenantID:       tenantID,
-			ConversationID: conversationUUID,
-			ID:             messageUUID,
+			Body:             body,
+			MentionedUserIds: mentions,
+			TenantID:         tenantID,
+			ConversationID:   conversationUUID,
+			ID:               messageUUID,
 		},
 	)
 	if err != nil {
@@ -1539,6 +1605,13 @@ func messageFromDB(row db.Message) Message {
 		Kind:           MessageKind(row.Kind),
 		Body:           row.Body,
 		CreatedAt:      row.CreatedAt.Time,
+	}
+
+	if len(row.MentionedUserIds) > 0 {
+		message.Mentions = append(
+			[]string(nil),
+			row.MentionedUserIds...,
+		)
 	}
 
 	if row.AuthorUserID.Valid {

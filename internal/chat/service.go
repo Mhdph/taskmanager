@@ -304,6 +304,65 @@ func (s *Service) OnlineMemberIDs(
 	return result, nil
 }
 
+// GetNotificationPreference returns the caller's notification mode for a
+// conversation. Members without an explicit preference get "all".
+func (s *Service) GetNotificationPreference(
+	ctx context.Context,
+	identity auth.Identity,
+	conversationID string,
+) (NotificationMode, error) {
+	conversation, _, err := s.authorize(
+		ctx,
+		identity,
+		conversationID,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return s.repository.GetNotificationPreference(
+		ctx,
+		identity.TenantID,
+		conversation.ID,
+		identity.UserID,
+	)
+}
+
+// SetNotificationPreference stores the caller's notification mode for a
+// conversation. Muting only silences push notifications; the stream still
+// delivers every message.
+func (s *Service) SetNotificationPreference(
+	ctx context.Context,
+	identity auth.Identity,
+	conversationID string,
+	mode NotificationMode,
+) (NotificationMode, error) {
+	if !mode.valid() {
+		return "", ErrInvalidNotificationMode
+	}
+
+	conversation, _, err := s.authorize(
+		ctx,
+		identity,
+		conversationID,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	if err := s.repository.SetNotificationPreference(
+		ctx,
+		identity.TenantID,
+		conversation.ID,
+		identity.UserID,
+		mode,
+	); err != nil {
+		return "", err
+	}
+
+	return mode, nil
+}
+
 // ProjectChat returns the project's conversation, creating it on first
 // access and refreshing its membership from the project.
 func (s *Service) ProjectChat(
@@ -641,16 +700,56 @@ func (s *Service) notifyMessageCreated(
 	conversationID := conversation.ID
 	messageID := message.ID
 
-	// Presence is shared across instances, so a user connected anywhere is
-	// skipped. One batched query keeps notification fan-out independent of
-	// conversation size.
-	recipients := make([]string, 0, len(members))
+	candidates := make([]string, 0, len(members))
 	for _, member := range members {
 		if member.UserID != authorUserID {
-			recipients = append(recipients, member.UserID)
+			candidates = append(candidates, member.UserID)
 		}
 	}
 
+	// Per-conversation preferences decide who is notified at all. A member
+	// without a stored preference uses the default mode.
+	preferences, err := s.repository.ListNotificationPreferences(
+		ctx,
+		message.TenantID,
+		conversation.ID,
+		candidates,
+	)
+	if err != nil {
+		// Fail open: notifying is better than silently dropping a
+		// notification because preferences could not be read.
+		log.Printf("list chat notification preferences: %v", err)
+	}
+
+	mentioned := make(map[string]struct{}, len(message.Mentions))
+	for _, userID := range message.Mentions {
+		mentioned[userID] = struct{}{}
+	}
+
+	recipients := make([]string, 0, len(candidates))
+
+	for _, userID := range candidates {
+		mode := preferences[userID]
+		if mode == "" {
+			mode = NotificationModeAll
+		}
+
+		switch mode {
+		case NotificationModeMute:
+			continue
+
+		case NotificationModeMentions:
+			if _, ok := mentioned[userID]; !ok {
+				continue
+			}
+		}
+
+		recipients = append(recipients, userID)
+	}
+
+	// Presence is shared across instances, so a user connected anywhere is
+	// skipped. One batched query keeps notification fan-out independent of
+	// conversation size.
 	online := map[string]struct{}{}
 
 	if s.presence != nil && len(recipients) > 0 {
@@ -670,21 +769,17 @@ func (s *Service) notifyMessageCreated(
 		}
 	}
 
-	for _, member := range members {
-		if member.UserID == authorUserID {
-			continue
-		}
-
+	for _, userID := range recipients {
 		// Online users get the message over the stream; a notification
 		// would duplicate it.
-		if _, ok := online[member.UserID]; ok {
+		if _, ok := online[userID]; ok {
 			continue
 		}
 
 		input := notification.SendInput{
 			TenantID: message.TenantID,
 
-			RecipientUserID: member.UserID,
+			RecipientUserID: userID,
 
 			Type: notification.EventChatMessage,
 
@@ -716,7 +811,7 @@ func (s *Service) notifyMessageCreated(
 		if err := s.notifications.Send(ctx, input); err != nil {
 			log.Printf(
 				"send chat notification to %s: %v",
-				member.UserID,
+				userID,
 				err,
 			)
 

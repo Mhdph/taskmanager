@@ -95,6 +95,10 @@ var (
 		"invalid message cursor",
 	)
 
+	ErrInvalidNotificationMode = errors.New(
+		"invalid notification mode",
+	)
+
 	ErrProjectNotFound = errors.New(
 		"project not found",
 	)
