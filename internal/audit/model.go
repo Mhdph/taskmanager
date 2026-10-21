@@ -42,6 +42,11 @@ const (
 	ActionSprintCompleted Action = "sprint.completed"
 
 	ActionTaskSprintChanged Action = "task.sprint_changed"
+
+	ActionTaskDeliverySubmitted        Action = "task.delivery.submitted"
+	ActionTaskDeliveryApproved         Action = "task.delivery.approved"
+	ActionTaskDeliveryChangesRequested Action = "task.delivery.changes_requested"
+	ActionTaskDeliveryWithdrawn        Action = "task.delivery.withdrawn"
 )
 
 type EntityType string

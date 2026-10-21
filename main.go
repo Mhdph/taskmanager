@@ -955,6 +955,14 @@ func main() {
 					r.Post("/restore", taskHandler.Restore)
 					r.Post("/claim", taskHandler.Claim)
 
+					r.Route("/deliveries", func(r chi.Router) {
+						r.Get("/", taskHandler.ListDeliveries)
+						r.Post("/", taskHandler.SubmitDelivery)
+						r.Get("/{deliveryID}", taskHandler.GetDelivery)
+						r.Post("/{deliveryID}/review", taskHandler.ReviewDelivery)
+						r.Post("/{deliveryID}/withdraw", taskHandler.WithdrawDelivery)
+					})
+
 					// Sprint assignment has its own endpoint: the sprint
 					// module owns the planning rules.
 					r.Put("/sprint", sprintHandler.SetTaskSprint)

@@ -3,6 +3,12 @@ package project
 type Permission string
 
 const (
+	PermissionViewTaskDeliveries Permission = "view_task_deliveries"
+	PermissionSubmitTaskDelivery Permission = "submit_task_delivery"
+	PermissionReviewTaskDelivery Permission = "review_task_delivery"
+)
+
+const (
 	PermissionViewTaskTime  Permission = "view_task_time"
 	PermissionTrackTaskTime Permission = "track_task_time"
 )

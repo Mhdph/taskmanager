@@ -3,10 +3,13 @@ package notification
 type EventType string
 
 const (
-	EventCommentMentioned  EventType = "comment.mentioned"
-	EventTaskAssigned      EventType = "task.assigned"
-	EventTaskStatusChanged EventType = "task.status_changed"
-	EventChatMessage       EventType = "chat.message"
+	EventCommentMentioned      EventType = "comment.mentioned"
+	EventTaskAssigned          EventType = "task.assigned"
+	EventTaskStatusChanged     EventType = "task.status_changed"
+	EventTaskDeliverySubmitted EventType = "task.delivery_submitted"
+	EventTaskDeliveryReviewed  EventType = "task.delivery_reviewed"
+	EventTaskDeliveryWithdrawn EventType = "task.delivery_withdrawn"
+	EventChatMessage           EventType = "chat.message"
 
 	// EventAutomation is a notification produced by an automation rule
 	// (for example a due-date reminder).

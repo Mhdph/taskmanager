@@ -308,6 +308,23 @@ type TaskCommentMention struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type TaskDelivery struct {
+	ID                pgtype.UUID
+	TenantID          string
+	ProjectID         pgtype.UUID
+	TaskID            pgtype.UUID
+	Revision          int32
+	SubmittedByUserID string
+	ReviewerUserID    string
+	Body              string
+	OutputUrl         pgtype.Text
+	Status            string
+	SubmittedAt       pgtype.Timestamptz
+	ReviewedByUserID  pgtype.Text
+	ReviewNote        pgtype.Text
+	ReviewedAt        pgtype.Timestamptz
+}
+
 type TaskDependency struct {
 	TenantID        string
 	ProjectID       pgtype.UUID
