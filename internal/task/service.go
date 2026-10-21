@@ -38,6 +38,8 @@ type Service struct {
 
 	auditRecorder AuditRecorder
 
+	automationNotifier AutomationNotifier
+
 	maxUploadSize int64
 }
 
@@ -317,6 +319,28 @@ func (s *Service) Create(
 		)
 	}
 
+	s.notifyAutomation(
+		ctx,
+		automationEventForTask(
+			EventTaskCreated,
+			input.Identity.UserID,
+			task,
+		),
+	)
+
+	// Creation with an assignee is also an assignment event for rules
+	// that react to assignment.
+	if task.AssigneeUserID != nil {
+		s.notifyAutomation(
+			ctx,
+			automationEventForTask(
+				EventTaskAssigned,
+				input.Identity.UserID,
+				task,
+			),
+		)
+	}
+
 	return task, nil
 }
 
@@ -586,6 +610,11 @@ type UpdateInput struct {
 
 	UpdateRecurrence bool
 	Recurrence       *string
+
+	// SuppressAutomation prevents this update from feeding the automation
+	// engine. Rule actions set it so applied actions cannot trigger
+	// another rule pass.
+	SuppressAutomation bool
 }
 
 // taskPositionGap is the default spacing between board positions, leaving
@@ -967,6 +996,37 @@ func (s *Service) Update(
 			*previousStatus,
 			*nextStatus,
 		)
+	}
+
+	if !input.SuppressAutomation {
+		if statusChanged &&
+			previousStatus != nil &&
+			nextStatus != nil {
+
+			event := automationEventForTask(
+				EventTaskStatusChanged,
+				input.Identity.UserID,
+				updated,
+			)
+
+			event.FromStatusID = &previousStatus.ID
+			event.FromStatusName = previousStatus.Name
+			event.ToStatusID = &nextStatus.ID
+			event.ToStatusName = nextStatus.Name
+
+			s.notifyAutomation(ctx, event)
+		}
+
+		if assigneeChanged {
+			s.notifyAutomation(
+				ctx,
+				automationEventForTask(
+					EventTaskAssigned,
+					input.Identity.UserID,
+					updated,
+				),
+			)
+		}
 	}
 
 	return updated, nil

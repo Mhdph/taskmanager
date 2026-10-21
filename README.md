@@ -278,6 +278,44 @@ roles control access; user IDs in application payloads do not replace authentica
 - Time tracking under `/projects/{projectID}/tasks/{taskID}/time-entries`:
   `POST /start`, `POST /stop`, `GET /`, `DELETE /{entryID}`. Each user has one active
   timer per tenant. Only the owner can stop a timer or delete their completed entry.
+- Automation rules under `/projects/{projectID}/automation-rules`:
+  `GET /` lists them, `POST /` creates one, `PATCH /{ruleID}` edits or
+  enables/disables it and `DELETE /{ruleID}` removes it. A rule has one
+  trigger and one to five ordered actions.
+  - Triggers: `task_status_changed` with optional `fromStatusId` and
+    `toStatusId`; `task_created` with optional `hasAssignee`;
+    `task_assigned` with optional `toUserId`; and `task_due` with
+    `daysBefore` (1–30, default 1).
+  - Actions: `set_assignee` assigns a fixed project member
+    (`{"assignee":"user","userId":"bob"}`) or the task creator
+    (`{"assignee":"creator"}`); `notify` sends a notification to any of
+    `assignee`, `creator`, `watchers` and explicit member ids, with an
+    optional `title` and `body`. Rule notifications reach
+    `NOTIFICATION_SERVICE_URL` with type `automation.triggered`.
+  - Example: when a task enters review, assign it to a reviewer and notify
+    them:
+
+    ```json
+    {
+      "name": "Request review",
+      "triggerType": "task_status_changed",
+      "triggerConfig": {"toStatusId": "<review-status-id>"},
+      "actions": [
+        {"type": "set_assignee", "assignee": "user", "userId": "bob"},
+        {"type": "notify", "recipients": ["assignee"]}
+      ]
+    }
+    ```
+
+  - Task events are evaluated asynchronously after the write and never
+    fail it. An action applied by a rule is not evaluated again, so rules
+    cannot cascade. The due sweep runs at startup and every
+    `AUTOMATION_SWEEP_INTERVAL` (default `15m`); it reminds once per rule,
+    task and due date, and again only when the deadline changes. It looks
+    at upcoming deadlines, not tasks that are already overdue.
+  - Permissions: managers create, edit and delete rules; members and
+    viewers read them. `AUTOMATION_MAX_RULES_PER_PROJECT` (default 20)
+    caps stored rules per project; creating one more returns `409`.
 - Archived lists use `?archived=true`. Restore with
   `POST /projects/{projectID}/restore` or
   `POST /projects/{projectID}/tasks/{taskID}/restore`.

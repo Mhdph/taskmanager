@@ -21,6 +21,27 @@ type AuditLog struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type AutomationDueDelivery struct {
+	RuleID pgtype.UUID
+	TaskID pgtype.UUID
+	DueAt  pgtype.Timestamptz
+	SentAt pgtype.Timestamptz
+}
+
+type AutomationRule struct {
+	ID              pgtype.UUID
+	TenantID        string
+	ProjectID       pgtype.UUID
+	Name            string
+	TriggerType     string
+	TriggerConfig   []byte
+	Actions         []byte
+	Enabled         bool
+	CreatedByUserID string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ChatPresence struct {
 	TenantID  string
 	UserID    string

@@ -52,4 +52,11 @@ const (
 
 	// PermissionPlanTasks allows changing the sprint a task belongs to.
 	PermissionPlanTasks Permission = "plan_tasks"
+
+	// PermissionViewAutomation allows reading a project's automation rules.
+	PermissionViewAutomation Permission = "view_automation"
+
+	// PermissionManageAutomation allows creating, editing and deleting
+	// automation rules.
+	PermissionManageAutomation Permission = "manage_automation"
 )

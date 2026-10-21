@@ -17,6 +17,7 @@ import (
 	"github.com/mhdph/taskmanager/internal/ai"
 	"github.com/mhdph/taskmanager/internal/audit"
 	"github.com/mhdph/taskmanager/internal/auth"
+	"github.com/mhdph/taskmanager/internal/automation"
 	"github.com/mhdph/taskmanager/internal/chat"
 	"github.com/mhdph/taskmanager/internal/comment"
 	"github.com/mhdph/taskmanager/internal/config"
@@ -350,6 +351,40 @@ func main() {
 
 	taskHandler := task.NewHandler(
 		taskService,
+	)
+
+	// -------------------------------------------------------------------------
+	// Automation module
+	// -------------------------------------------------------------------------
+
+	automationRepository := automation.NewRepository(
+		pool,
+		queries,
+	)
+
+	automationService := automation.NewService(
+		automationRepository,
+		taskRepository,
+		projectRepository,
+		projectAuthorizer,
+		notificationDispatcher,
+		cfg.Automation.MaxRulesPerProject,
+	)
+
+	// The two services need each other to apply rule actions while still
+	// publishing the task events rules react to.
+	automationService.SetTaskUpdater(taskService)
+	taskService.SetAutomationNotifier(automationService)
+
+	automationHandler := automation.NewHandler(
+		automationService,
+	)
+
+	// Due-date rules are swept in the background; task events are
+	// evaluated by the same worker pool.
+	go automationService.Run(
+		ctx,
+		cfg.Automation.SweepInterval,
 	)
 
 	// -------------------------------------------------------------------------
@@ -893,6 +928,13 @@ func main() {
 				r.Post("/", viewHandler.Create)
 				r.Patch("/{viewID}", viewHandler.Update)
 				r.Delete("/{viewID}", viewHandler.Delete)
+			})
+
+			r.Route("/automation-rules", func(r chi.Router) {
+				r.Get("/", automationHandler.List)
+				r.Post("/", automationHandler.Create)
+				r.Patch("/{ruleID}", automationHandler.Update)
+				r.Delete("/{ruleID}", automationHandler.Delete)
 			})
 
 			r.Get(

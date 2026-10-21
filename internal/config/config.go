@@ -23,6 +23,18 @@ type Config struct {
 	AI      AIConfig
 
 	Chat ChatConfig
+
+	Automation AutomationConfig
+}
+
+type AutomationConfig struct {
+	// SweepInterval is how often due-date rules are evaluated
+	// (AUTOMATION_SWEEP_INTERVAL, default 15m).
+	SweepInterval time.Duration
+
+	// MaxRulesPerProject caps stored rules per project
+	// (AUTOMATION_MAX_RULES_PER_PROJECT, default 20).
+	MaxRulesPerProject int
 }
 
 type ChatConfig struct {
@@ -100,6 +112,33 @@ func Load() (Config, error) {
 		reconcileGracePeriod = parsed
 	}
 
+	automationSweepInterval := 15 * time.Minute
+
+	if raw := os.Getenv("AUTOMATION_SWEEP_INTERVAL"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed <= 0 {
+			return Config{}, fmt.Errorf(
+				"invalid AUTOMATION_SWEEP_INTERVAL: %q",
+				raw,
+			)
+		}
+
+		automationSweepInterval = parsed
+	}
+
+	automationMaxRules := 20
+
+	if raw := os.Getenv("AUTOMATION_MAX_RULES_PER_PROJECT"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			return Config{}, fmt.Errorf(
+				"AUTOMATION_MAX_RULES_PER_PROJECT must be between 1 and 100",
+			)
+		}
+
+		automationMaxRules = parsed
+	}
+
 	graphQLEndpoint, err := requireEnv("HOSTED_GRAPHQL_ENDPOINT")
 	if err != nil {
 		return Config{}, err
@@ -166,6 +205,11 @@ func Load() (Config, error) {
 			AllowedOrigins: splitList(
 				os.Getenv("CHAT_WS_ORIGINS"),
 			),
+		},
+
+		Automation: AutomationConfig{
+			SweepInterval:      automationSweepInterval,
+			MaxRulesPerProject: automationMaxRules,
 		},
 	}
 

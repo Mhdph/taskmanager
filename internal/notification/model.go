@@ -7,6 +7,10 @@ const (
 	EventTaskAssigned      EventType = "task.assigned"
 	EventTaskStatusChanged EventType = "task.status_changed"
 	EventChatMessage       EventType = "chat.message"
+
+	// EventAutomation is a notification produced by an automation rule
+	// (for example a due-date reminder).
+	EventAutomation EventType = "automation.triggered"
 )
 
 type SendInput struct {
