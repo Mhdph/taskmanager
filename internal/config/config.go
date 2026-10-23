@@ -91,6 +91,14 @@ type HostedConfig struct {
 }
 
 func Load() (Config, error) {
+	environment := strings.ToLower(strings.TrimSpace(getEnv("APP_ENV", "development")))
+	devMode, err := strconv.ParseBool(getEnv("IDENTITY_DEV_MODE", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("IDENTITY_DEV_MODE must be a boolean")
+	}
+	if devMode && environment != "development" && environment != "test" {
+		return Config{}, fmt.Errorf("IDENTITY_DEV_MODE is only allowed in development or test")
+	}
 	databaseURL, err := requireEnv("DATABASE_URL")
 	if err != nil {
 		return Config{}, err
@@ -154,7 +162,7 @@ func Load() (Config, error) {
 			BaseURL: getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 			Model:   getEnv("DEEPSEEK_MODEL", "deepseek-flash"),
 		},
-		Environment: getEnv("APP_ENV", "development"),
+		Environment: environment,
 
 		Server: ServerConfig{
 			Host: getEnv("APP_HOST", "0.0.0.0"),
@@ -168,7 +176,7 @@ func Load() (Config, error) {
 		Hosted: HostedConfig{
 			GraphQLEndpoint: graphQLEndpoint,
 
-			DevMode: getEnv("IDENTITY_DEV_MODE", "false") == "true",
+			DevMode: devMode,
 		},
 
 		Notification: NotificationConfig{

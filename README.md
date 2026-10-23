@@ -58,6 +58,24 @@ empty in this mode; attachment endpoints then return an error instead of
 failing startup. But `docker compose` sets `MINIO_ENDPOINT`; unset it there
 explicitly to use this shortcut.
 
+## NUP platform sign-in
+
+The standalone UI uses the same bridge-token and session-header contract as the
+NUP admin app. `POST /auth/bridge` accepts `{"bridgeToken":"..."}` without existing
+session headers, exchanges it via `nupConfirmBridgeToken` at
+`HOSTED_GRAPHQL_ENDPOINT`, and returns `token`, `appId`, `userId`, and
+`fromSupportMenu`. Invalid tokens return 401; an unavailable provider returns
+502. Request JSON is bounded, bridge tokens are limited to 8192 bytes, and
+responses are never cached. Redirects from the identity provider are rejected
+so credentials cannot be forwarded to another host.
+
+The UI stores the platform session cookies and forwards `X-APIKEY`, `USER-ID`,
+`APP-ID`, and `FROM-SUPPORT-MENU` on authenticated requests. Support-menu values
+`yes`/`no` and boolean strings are accepted after hosted profile validation.
+`APP_ENV=production` (or staging) refuses `IDENTITY_DEV_MODE=true`; the dev bypass
+is allowed only in development and test. All API responses use `Cache-Control:
+no-store` and `X-Content-Type-Options: nosniff`.
+
 ## Run the API with Go
 
 Requires the Go version in `go.mod`, PostgreSQL 17 and a MinIO instance. Start only

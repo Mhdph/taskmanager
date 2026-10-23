@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -14,9 +15,14 @@ type Client struct {
 }
 
 func NewClient(endpoint string, httpClient *http.Client) *Client {
+	// Custom authentication headers must never follow a redirect to another host.
+	client := *httpClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	return &Client{
 		endpoint:   endpoint,
-		httpClient: httpClient,
+		httpClient: &client,
 	}
 }
 
@@ -177,7 +183,7 @@ func (c *Client) NupProfileAppInfo(
 
 	var response graphQLResponse
 
-	err = json.NewDecoder(res.Body).Decode(&response)
+	err = json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&response)
 	if err != nil {
 		return Profile{}, fmt.Errorf("decode graphql response: %w", err)
 	}

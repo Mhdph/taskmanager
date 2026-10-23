@@ -25,6 +25,7 @@ import (
 	database "github.com/mhdph/taskmanager/internal/database/generated"
 	"github.com/mhdph/taskmanager/internal/favorite"
 	"github.com/mhdph/taskmanager/internal/hosted"
+	"github.com/mhdph/taskmanager/internal/httpx"
 	"github.com/mhdph/taskmanager/internal/member"
 	"github.com/mhdph/taskmanager/internal/notification"
 	"github.com/mhdph/taskmanager/internal/project"
@@ -539,11 +540,13 @@ func main() {
 	// -------------------------------------------------------------------------
 
 	router := chi.NewRouter()
+	router.Use(httpx.SecurityHeaders)
 
 	// Public routes
 	router.Get("/", handleHome)
 	router.Get("/health", readinessHandler(pool.Ping, storageClient.CheckHealth))
 	router.Get("/live", handleHealth)
+	router.Post("/auth/bridge", auth.BridgeHandler(hostedClient))
 
 	// Authenticated user
 	router.With(

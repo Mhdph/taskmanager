@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"sync"
 	"time"
 )
@@ -12,8 +13,10 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
+const maxIdentityCacheEntries = 4096
+
 type IdentityCache struct {
-	mu    sync.RWMutex
+	mu    sync.Mutex
 	items map[string]cacheEntry
 	ttl   time.Duration
 }
@@ -26,20 +29,17 @@ func NewIdentityCache(ttl time.Duration) *IdentityCache {
 }
 
 func (c *IdentityCache) Get(key string) (Identity, bool) {
-	c.mu.RLock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	entry, ok := c.items[key]
-
-	c.mu.RUnlock()
 
 	if !ok {
 		return Identity{}, false
 	}
 
 	if time.Now().After(entry.expiresAt) {
-		c.mu.Lock()
 		delete(c.items, key)
-		c.mu.Unlock()
 
 		return Identity{}, false
 	}
@@ -53,6 +53,21 @@ func (c *IdentityCache) Set(
 ) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if len(c.items) >= maxIdentityCacheEntries {
+		now := time.Now()
+		for k, entry := range c.items {
+			if now.After(entry.expiresAt) {
+				delete(c.items, k)
+			}
+		}
+		// Eviction only forces a fresh hosted lookup; it never grants access.
+		if len(c.items) >= maxIdentityCacheEntries {
+			for k := range c.items {
+				delete(c.items, k)
+				break
+			}
+		}
+	}
 
 	c.items[key] = cacheEntry{
 		identity:  identity,
@@ -61,15 +76,8 @@ func (c *IdentityCache) Set(
 }
 
 func buildCacheKey(input ResolveInput) string {
-	sum := sha256.Sum256([]byte(input.Token))
-
-	tokenHash := hex.EncodeToString(sum[:])
-
-	return input.UserID +
-		":" +
-		input.AppID +
-		":" +
-		tokenHash +
-		":" +
-		input.FromSupportMenu
+	// Encode field boundaries so IDs containing colons cannot share a cache entry.
+	encoded, _ := json.Marshal(input)
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
 }

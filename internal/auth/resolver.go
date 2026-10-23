@@ -80,7 +80,14 @@ func (r *Resolver) Resolve(
 	isSupport := false
 
 	if input.FromSupportMenu != "" {
-		isSupport, err = strconv.ParseBool(input.FromSupportMenu)
+		supportMode := input.FromSupportMenu
+		switch supportMode {
+		case "yes":
+			supportMode = "true"
+		case "no":
+			supportMode = "false"
+		}
+		isSupport, err = strconv.ParseBool(supportMode)
 		if err != nil {
 			return Identity{}, fmt.Errorf(
 				"invalid support mode: %w",
