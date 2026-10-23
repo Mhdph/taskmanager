@@ -717,6 +717,7 @@ func main() {
 	)
 
 	// Members (workspace directory)
+	router.With(authMiddleware.Authenticate).Get("/workload", memberHandler.Workload)
 	router.Route(
 		"/members",
 		func(r chi.Router) {
@@ -732,6 +733,11 @@ func main() {
 				"/{userID}",
 				memberHandler.Get,
 			)
+
+			r.Get("/{userID}/capacity", memberHandler.GetCapacity)
+			r.Put("/{userID}/capacity", memberHandler.SetCapacity)
+			r.Delete("/{userID}/capacity", memberHandler.ClearCapacity)
+			r.Get("/{userID}/workload", memberHandler.Workload)
 
 			r.Patch(
 				"/{userID}",

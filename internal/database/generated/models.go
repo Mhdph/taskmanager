@@ -123,6 +123,15 @@ type Label struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type MemberCapacity struct {
+	TenantID             string
+	UserID               string
+	DailyCapacitySeconds int32
+	WorkingDays          []int16
+	Timezone             string
+	UpdatedAt            pgtype.Timestamptz
+}
+
 type Message struct {
 	ID               pgtype.UUID
 	TenantID         string

@@ -122,6 +122,11 @@ roles control access; user IDs in application payloads do not replace authentica
 
 - Projects, memberships, configurable statuses and tasks.
 - Comments, watchers, attachments, dependencies, search and dashboard.
+- [Member capacity and workload](docs/member-capacity.md): configure working
+  days, daily hours and time zone under `/members/{userID}/capacity`; read
+  manager-only `/workload` and personal `/members/{userID}/workload` reports.
+  Reports show remaining estimated work, daily overload, unscheduled and
+  unestimated tasks. Apply migration 24.
 - [Task delivery and approval](docs/task-deliveries.md) under
   `/projects/{projectID}/tasks/{taskID}/deliveries`: versioned submissions,
   designated reviewer approval or changes with a required reason, withdrawal,
