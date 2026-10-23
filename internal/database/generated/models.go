@@ -341,6 +341,25 @@ type TaskLabel struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type TaskReminder struct {
+	ID               pgtype.UUID
+	TenantID         string
+	ProjectID        pgtype.UUID
+	TaskID           pgtype.UUID
+	UserID           string
+	RemindAt         pgtype.Timestamptz
+	MinutesBeforeDue pgtype.Int4
+	Note             string
+	Status           string
+	DispatchID       pgtype.UUID
+	AttemptCount     int32
+	NextAttemptAt    pgtype.Timestamptz
+	SentAt           pgtype.Timestamptz
+	SentFor          pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type TaskTimeEntry struct {
 	ID              pgtype.UUID
 	TenantID        string

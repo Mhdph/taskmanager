@@ -2,6 +2,8 @@ package notification
 
 type EventType string
 
+const EventTaskReminder EventType = "task.reminder"
+
 const (
 	EventCommentMentioned      EventType = "comment.mentioned"
 	EventTaskAssigned          EventType = "task.assigned"

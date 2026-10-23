@@ -353,6 +353,16 @@ func main() {
 		taskService,
 	)
 
+	reminderCtx, stopReminders := context.WithCancel(ctx)
+	defer stopReminders()
+	remindersDone := make(chan struct{})
+	go func() {
+		defer close(remindersDone)
+		if cfg.Notification.BaseURL != "" {
+			taskService.RunReminders(reminderCtx, notificationClient)
+		}
+	}()
+
 	// -------------------------------------------------------------------------
 	// Automation module
 	// -------------------------------------------------------------------------
@@ -978,6 +988,13 @@ func main() {
 						r.Post("/stop", taskHandler.StopTimer)
 						r.Delete("/{entryID}", taskHandler.DeleteTimeEntry)
 					})
+
+					r.Route("/reminders", func(r chi.Router) {
+						r.Get("/", taskHandler.ListReminders)
+						r.Post("/", taskHandler.CreateReminder)
+						r.Post("/{reminderID}/snooze", taskHandler.SnoozeReminder)
+						r.Delete("/{reminderID}", taskHandler.CancelReminder)
+					})
 					r.Route("/watchers", func(r chi.Router) {
 						r.Get("/", taskHandler.ListWatchers)
 						r.Post("/", taskHandler.AddWatcher)
@@ -1113,6 +1130,13 @@ func main() {
 		10*time.Second,
 	)
 	defer cancelShutdown()
+
+	stopReminders()
+	select {
+	case <-remindersDone:
+	case <-shutdownCtx.Done():
+		log.Printf("stop reminder worker: %v", shutdownCtx.Err())
+	}
 
 	// http.Server.Shutdown does not close hijacked WebSocket connections,
 	// and would wait for their handlers. Close them and release their

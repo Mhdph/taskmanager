@@ -126,6 +126,11 @@ roles control access; user IDs in application payloads do not replace authentica
   `/projects/{projectID}/tasks/{taskID}/deliveries`: versioned submissions,
   designated reviewer approval or changes with a required reason, withdrawal,
   paginated history and transactional activity records. Apply migration 22.
+- [Configurable personal task reminders](docs/task-reminders.md) under
+  `/projects/{projectID}/tasks/{taskID}/reminders`: absolute or before-due times,
+  multiple reminders, snooze and cancellation. A database-backed worker retries
+  provider failures with a stable idempotency key. Apply migration 23 and set
+  `NOTIFICATION_SERVICE_URL` to enable delivery.
 - Chat under `/conversations` and `/projects/{projectID}/chat`: one decision
   thread per project, direct messages (a single thread per user pair) and group
   conversations. `GET /conversations` includes unread counts and the last

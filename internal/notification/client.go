@@ -39,6 +39,12 @@ func (c *Client) Send(
 	ctx context.Context,
 	input SendInput,
 ) error {
+	return c.SendWithID(ctx, input, uuid.NewString())
+}
+
+// SendWithID waits for provider acknowledgement and preserves the caller's
+// idempotency key across retries of a durable notification.
+func (c *Client) SendWithID(ctx context.Context, input SendInput, deliveryID string) error {
 	payload, err := json.Marshal(
 		input,
 	)
@@ -48,7 +54,7 @@ func (c *Client) Send(
 			err,
 		)
 	}
-	return c.sendPayload(ctx, payload, uuid.NewString())
+	return c.sendPayload(ctx, payload, deliveryID)
 }
 
 type deliveryError struct {
